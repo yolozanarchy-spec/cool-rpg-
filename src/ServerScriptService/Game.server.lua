@@ -106,6 +106,10 @@ local function handle(ctx,op,p)
  if op=="CampTab" and (table.find({"Camp","Inventory","Crafting","Skills","Class","Stats","Codex"},phase) or (phase=="Merchant" and not ctx.shopEvent)) then
   local t=p and p.tab
   if t=="Map" then ctx.phase="Map"
+  elseif t=="Merchant" and r.class=="Merchant" and not ctx.shopEvent then
+   ctx.shopEvent=false
+   if #r.shop==0 then ensureShop(ctx);r.shop=ctx.shop end
+   ctx.shop=r.shop;ctx.phase="Merchant"
   elseif table.find({"Inventory","Crafting","Skills","Class","Stats","Codex"},t) then ctx.phase=t
   else return end
   return
@@ -153,6 +157,16 @@ local function handle(ctx,op,p)
  end
  if op=="Equip" and phase=="Inventory" then
   if Progress.Equip(r,p and p.name) then note(ctx,"Equipment changed") end;return
+ end
+ if op=="Unequip" and phase=="Inventory" then
+  local slot=p and p.slot
+  if typeof(slot)~="string" or not table.find({"Weapon","Armor","Shield","Ring"},slot) then return end
+  local equipped=r.equipment[slot]
+  if not equipped then return end
+  Progress.AddItem(r,equipped,1)
+  r.equipment[slot]=nil
+  note(ctx,"Unequipped "..equipped)
+  return
  end
  if op=="Craft" and phase=="Crafting" then
   if Progress.Craft(r,p and p.name) then note(ctx,"Crafted "..p.name) else note(ctx,"Missing ingredients") end;return
