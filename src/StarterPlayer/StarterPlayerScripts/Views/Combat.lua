@@ -1,99 +1,144 @@
 --!strict
--- Combat layout follows PDF: turn queue left, enemies center, fixed scroll log right,
--- bottom 2x2 action buttons, and skills/items replacing the action grid.
+-- Original gamerpGggg Combat layout: party cards left, enemy cards right,
+-- central battle stage, horizontal turn-order strip, log and actions at bottom.
+-- Updated design: Guard lives under Skills; items/skills replace action buttons.
 local T=require(script.Parent.Kit)
 local M={};local c=T.c
-local function hpCard(parent,name,now,total,x,y,w,color)
- T.label(parent,name,x+8,y,w-16,23,{size=14,bold=true})
- T.label(parent,now.." / "..total.." HP",x+8,y+29,w-16,25,{size=13,color=color})
- T.progress(parent,x+8,y+60,w-16,9,now,total,color)
+
+local function card(parent,name,level,hp,maxHP,x,y,w,mainColor)
+ local f=T.rect(parent,x,y,w,84,c.raised,0,5)
+ T.stroke(f,c.border,1)
+ T.label(f,name,12,5,w-75,23,{size=14,bold=true})
+ T.label(f,"Lv "..level, w-68,5,60,23,{size=12,color=c.mute,align=Enum.TextXAlignment.Right})
+ T.label(f,hp.." / "..maxHP,12,28,w-24,22,{size=12,color=mainColor})
+ T.progress(f,10,58,w-20,12,hp,maxHP,mainColor)
+ return f
 end
+
 function M.Show(v)
- local s=v.state;local r=s.run;local b=r.combat;local localView=v.localState
+ local r=v.state.run
+ local b=r.combat
  if not b then return end
- local root=v.root
- T.subtitle(root,b.battleKind=="Boss" and "BOSS COMBAT" or "COMBAT",228,79,620)
- T.label(root,"STAGE "..(r.stage or 1).."    •    ROUND "..b.round,16,78,182,30,{size=13,bold=true,color=c.gold})
- local queue=T.panel(root,13,112,181,514,"TURN ORDER",c.gold)
- T.label(queue,"YOUR TURN",12,52,157,27,{size=13,bold=true,color=c.green})
- T.button(queue,"01  YOU",12,86,155,46,nil,c.green,true)
- local y=151
- for i,e in ipairs(b.enemies) do
-  if e.hp>0 then
-   T.button(queue,string.format("%02d  %s",i+1,e.name),12,y,155,48,function()
-    localView.target=i;v.redraw()
-   end,c.red,localView.target==i)
-   y+=58
-  end
- end
- local field=T.panel(root,206,112,782,270,"BATTLEFIELD",c.red)
- T.label(field,"Select a living enemy, then choose an action.",16,46,750,25,{size=13,color=c.mute})
- local alive={}
- for i,e in ipairs(b.enemies) do if e.hp>0 then table.insert(alive,i) end end
- local count=math.max(1,#alive)
- local cardWidth=math.min(222,math.floor(726/count)-8)
- local left=math.floor((782-count*(cardWidth+10)+10)/2)
- for displayIndex,i in ipairs(alive) do
-  local e=b.enemies[i];local x=left+(displayIndex-1)*(cardWidth+10)
-  local selected=localView.target==i
-  local card=T.button(field,e.name,x,84,cardWidth,148,function() localView.target=i;v.redraw() end,selected and c.gold or c.red,selected)
-  T.label(card,"LV "..e.level.."   •   DEF "..e.defense,13,38,cardWidth-23,25,{size=12,color=c.mute})
-  T.label(card,e.hp.." / "..e.maxHP.." HP",13,68,cardWidth-23,27,{size=14,bold=true,color=c.green})
-  T.progress(card,13,101,cardWidth-26,10,e.hp,e.maxHP,c.green)
-  local effects={}
-  for name,turns in pairs(e.status or {}) do if turns>0 then table.insert(effects,name.." "..turns) end end
-  T.label(card,table.concat(effects,"  "),13,116,cardWidth-22,21,{size=11,color=c.purple})
- end
- if #alive==0 then T.label(field,"VICTORY!",240,109,302,80,{size=31,bold=true,color=c.green,align=Enum.TextXAlignment.Center}) end
- local log=T.panel(root,1001,112,263,514,"COMBAT LOG",c.blue)
- T.label(log,"Newest actions first",13,50,230,19,{size=12,color=c.mute})
- local scroll=T.scroll(log,12,77,237,419)
- for _,msg in ipairs(b.log or {}) do
-  local label=T.copy(scroll,"•  "..msg,math.max(45,math.ceil(#msg/25)*19),c.white)
-  label.TextXAlignment=Enum.TextXAlignment.Left
- end
- local actions=T.panel(root,206,394,782,230,"SELECT ACTION",c.gold)
- local tab=localView.combatTab or "Actions"
+ local p=v.root;local localView=v.localState
+ local stats=v.state.stats or {}
+ local maxHP=stats.MaxHP or r.hp
+ local maxMP=stats.MaxMP or r.mp
  local function act(action,skill)
   localView.combatTab="Actions"
   v.send("CombatAction",{action=action,index=localView.target or 1,skill=skill})
  end
+
+ local headline=T.rect(p,0,58,1280,44,c.panel,.02,false)
+ T.label(headline,"STAGE "..(r.stage or 1),18,0,160,43,{size=15,bold=true,color=c.gold})
+ T.label(headline,"ROUND "..(b.round or 1),202,0,150,43,{size=15,color=c.mute})
+ T.label(headline,"YOUR TURN",1090,0,161,43,{size=14,bold=true,color=c.green,align=Enum.TextXAlignment.Right})
+
+ local party=T.panel(p,13,111,248,316,"PARTY",c.blue)
+ card(party,r.race.." "..r.class,r.level,r.hp,maxHP,10,58,227,c.green)
+ T.label(party,"MP "..r.mp.." / "..maxMP,22,151,195,27,{size=13,color=c.blue})
+ T.progress(party,21,182,203,9,r.mp,maxMP,c.blue)
+ T.label(party,"BARRIER "..(b.barrier or 0),21,204,199,25,{size=12,color=c.gold})
+ if b.zombie then
+  T.label(party,"SUMMON  •  UNDEAD",17,248,208,28,{size=13,bold=true,color=c.purple})
+  T.label(party,"Attack "..(b.zombie.attack or 0),20,274,197,23,{size=13,color=c.mute})
+ end
+
+ local field=T.panel(p,275,111,686,316,"BATTLEFIELD",c.gold)
+ local queue=T.rect(field,15,56,655,53,c.raised,0,4)
+ T.label(queue,"TURN ORDER",10,5,120,41,{size=13,bold=true,color=c.mute})
+ T.button(queue,"YOU",135,7,104,39,nil,c.green,true)
+ local queuePos=245
+ for i,e in ipairs(b.enemies) do
+  if e.hp>0 and queuePos<591 then
+   T.button(queue,string.format("%d %s",i,e.name),queuePos,7,109,39,function()
+    localView.target=i;v.redraw()
+   end,c.red,localView.target==i)
+   queuePos+=115
+  end
+ end
+ local selectedEnemy=b.enemies[localView.target] or b.enemies[1]
+ if selectedEnemy and selectedEnemy.hp<=0 then
+  for i,e in ipairs(b.enemies) do
+   if e.hp>0 then localView.target=i;selectedEnemy=e;break end
+  end
+ end
+ if selectedEnemy then
+  T.label(field,selectedEnemy.name,22,147,632,50,
+   {size=29,bold=true,align=Enum.TextXAlignment.Center})
+  T.label(field,"Enemy level "..selectedEnemy.level.."  •  Armor "..selectedEnemy.defense,
+   34,194,617,29,{size=15,color=c.mute,align=Enum.TextXAlignment.Center})
+  local fx={}
+  for name,duration in pairs(selectedEnemy.status or {}) do
+   if duration>0 then table.insert(fx,name.." ×"..duration) end
+  end
+  T.label(field,table.concat(fx,"    "),30,235,626,30,
+   {size=13,color=c.purple,align=Enum.TextXAlignment.Center})
+ end
+ T.label(field,"Click an enemy on the right to select a target.",25,271,635,25,
+  {size=12,color=c.mute,align=Enum.TextXAlignment.Center})
+
+ local enemies=T.panel(p,974,111,293,316,"ENEMIES",c.red)
+ local enemyScroll=T.scroll(enemies,8,54,277,250)
+ for i,e in ipairs(b.enemies) do
+  if e.hp>0 then
+   local label=e.name.."  •  LV "..e.level
+   T.entry(enemyScroll,label,e.hp.." / "..e.maxHP.." HP",function()
+    localView.target=i;v.redraw()
+   end,c.red,71,localView.target==i)
+  end
+ end
+
+ local log=T.panel(p,13,440,396,242,"COMBAT LOG",c.blue)
+ T.label(log,"Scroll to review earlier actions",16,48,365,21,{size=12,color=c.mute})
+ local sc=T.scroll(log,11,76,373,156)
+ for _,msg in ipairs(b.log or {}) do
+  T.copy(sc,"• "..msg,math.max(41,math.ceil(#msg/33)*20),c.white)
+ end
+
+ local commands=T.panel(p,421,440,846,242,"ACTIONS",c.green)
+ local tab=localView.combatTab or "Actions"
  if tab=="Actions" then
-  local opts={
+  local actions={
    {"ATTACK",c.red,function() act("Attack") end},
+   {"SKILLS",c.purple,function() localView.combatTab="Skills";v.redraw() end},
    {"ITEMS",c.blue,function() localView.combatTab="Items";v.redraw() end},
    {"ESCAPE",c.mute,function() act("Escape") end},
-   {"SKILLS",c.purple,function() localView.combatTab="Skills";v.redraw() end},
   }
-  for i,o in ipairs(opts) do
+  for i,a in ipairs(actions) do
    local col=(i-1)%2;local row=math.floor((i-1)/2)
-   T.button(actions,o[1],16+col*382,60+row*77,369,64,o[3],o[2])
+   T.button(commands,a[1],14+col*415,61+row*84,399,73,a[3],a[2])
   end
  else
-  T.button(actions,"← BACK TO ACTIONS",15,10,230,36,function() localView.combatTab="Actions";v.redraw() end,c.mute)
-  local itemScroll=T.scroll(actions,15,56,752,159)
+  T.button(commands,"BACK",672,9,160,39,function()
+   localView.combatTab="Actions";v.redraw()
+  end,c.mute)
+  T.label(commands,tab:upper().."  •  SELECT AN ACTION",15,53,800,25,
+   {size=14,color=c.mute})
+  local choices=T.scroll(commands,14,85,818,147)
   if tab=="Skills" then
-   T.entry(itemScroll,"Guard","Universal skill • halves incoming attacks and grants 3 Barrier",function() act("Skill","Guard") end,c.green,65)
+   T.entry(choices,"Guard","Universal skill  •  Damage reduction + Barrier",function()
+    act("Skill","Guard") end,c.green,60)
    for _,name in ipairs(v.content.BaseSkills[r.class]) do
     local cd=b.cooldowns[name] or 0
-    local desc=cd>0 and ("ON COOLDOWN  •  "..cd.." turns") or "Select to use this skill on your target"
-    if name=="Crafted Spell" then desc=r.spell.name.."   •   "..desc end
-    T.entry(itemScroll,name,desc,function() if cd==0 then act("Skill",name) end end,cd>0 and c.border or c.purple,65)
+    local info=cd>0 and ("Cooldown: "..cd.." turns") or "Use on selected target"
+    if name=="Crafted Spell" then info=r.spell.name.."  •  "..info end
+    T.entry(choices,name,info,function()
+     if cd==0 then act("Skill",name) end
+    end,cd>0 and c.border or c.purple,60)
    end
   else
-   local n=0
+   local count=0
    for _,name in ipairs(T.keys(r.inventory)) do
     local item=v.content.Items[name]
     if item and item.kind=="Consumable" and r.inventory[name]>0 then
-     n+=1;T.entry(itemScroll,name.."   ×"..r.inventory[name],"Use this item during your turn",function() act("Item",name) end,c.blue,60)
+     count+=1
+     T.entry(choices,name.."  ×"..r.inventory[name],"Use this item",function()
+      act("Item",name)
+     end,c.blue,60)
     end
    end
-   if n==0 then T.copy(itemScroll,"No consumable items available.",50,c.mute) end
+   if count==0 then T.copy(choices,"No usable items in your inventory.",56,c.mute) end
   end
  end
- local stats=s.stats or {}
- local user=T.rect(root,206,637,782,39,c.raised,.02,9);T.stroke(user)
- T.label(user,""..r.race.." "..r.class.."   |   LEVEL "..r.level,13,3,250,32,{size=13,bold=true})
- T.label(user,"HP "..r.hp.."/"..(stats.MaxHP or "?").."     MP "..r.mp.."/"..(stats.MaxMP or "?").."     BARRIER "..b.barrier,290,4,470,31,{size=14,bold=true,color=c.green})
 end
 return M

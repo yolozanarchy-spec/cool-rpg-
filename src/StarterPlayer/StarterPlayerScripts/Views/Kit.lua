@@ -1,14 +1,17 @@
 --!strict
 -- Reusable, client-only dark-fantasy GUI primitives. Base canvas: 1280 x 720.
 local T = {}
+-- Original gamerpGggg.rbxl palette: main #14141E, camp #161616,
+-- UI panels #1E1E1E, muted buttons #2D2D2D and green primary #329632.
 T.c = {
- bg=Color3.fromRGB(13,16,24), panel=Color3.fromRGB(28,32,45),
- raised=Color3.fromRGB(40,46,61), soft=Color3.fromRGB(51,58,75),
- border=Color3.fromRGB(71,79,100), white=Color3.fromRGB(239,238,242),
- mute=Color3.fromRGB(170,177,193), gold=Color3.fromRGB(230,188,105),
- green=Color3.fromRGB(99,205,151), red=Color3.fromRGB(222,105,119),
- blue=Color3.fromRGB(112,169,238), purple=Color3.fromRGB(175,135,233),
+ bg=Color3.fromRGB(20,20,30), panel=Color3.fromRGB(30,30,35),
+ raised=Color3.fromRGB(45,45,53), soft=Color3.fromRGB(58,57,68),
+ border=Color3.fromRGB(75,73,87), white=Color3.fromRGB(239,238,244),
+ mute=Color3.fromRGB(164,162,180), gold=Color3.fromRGB(213,187,108),
+ green=Color3.fromRGB(73,167,94), red=Color3.fromRGB(187,76,81),
+ blue=Color3.fromRGB(86,124,192), purple=Color3.fromRGB(130,105,172),
 }
+
 function T.make(class, parent, props)
  local o=Instance.new(class)
  for k,v in pairs(props or {}) do o[k]=v end
@@ -21,10 +24,10 @@ function T.rect(parent,x,y,w,h,color,alpha,radius)
  return f
 end
 function T.stroke(parent,color,thickness)
- return T.make("UIStroke",parent,{ApplyStrokeMode=Enum.ApplyStrokeMode.Border,Color=color or T.c.border,Transparency=.27,Thickness=thickness or 1})
+ return T.make("UIStroke",parent,{ApplyStrokeMode=Enum.ApplyStrokeMode.Border,Color=color or T.c.border,Transparency=.45,Thickness=thickness or 1})
 end
 function T.panel(parent,x,y,w,h,title,accent)
- local p=T.rect(parent,x,y,w,h,T.c.panel,.03,12)
+ local p=T.rect(parent,x,y,w,h,T.c.panel,.01,6)
  T.stroke(p)
  if title then
   T.label(p,title,17,11,w-34,31,{size=18,bold=true,color=accent or T.c.gold})
@@ -44,13 +47,14 @@ function T.label(parent,text,x,y,w,h,opt)
  })
 end
 function T.button(parent,text,x,y,w,h,callback,accent,selected)
- local color=selected and Color3.fromRGB(62,66,80) or T.c.raised
+ local color=selected and Color3.fromRGB(63,70,69) or T.c.raised
  local b=T.make("TextButton",parent,{Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),
   BackgroundColor3=color,BorderSizePixel=0,AutoButtonColor=true,Text=tostring(text),
   Font=Enum.Font.GothamSemibold,TextSize=15,TextColor3=T.c.white,TextWrapped=true})
- T.make("UICorner",b,{CornerRadius=UDim.new(0,8)})
+ T.make("UICorner",b,{CornerRadius=UDim.new(0,5)})
  T.stroke(b,selected and (accent or T.c.gold) or T.c.border,selected and 2 or 1)
- T.rect(b,0,0,4,h,accent or T.c.blue,0,3)
+ -- Flat button treatment matching the original UI; no ornamental side stripe.
+ if selected then T.rect(b,0,h-3,w,3,accent or T.c.green,0,false) end
  if callback then b.Activated:Connect(callback) end
  return b
 end
@@ -67,9 +71,9 @@ function T.entry(scroll,title,detail,callback,accent,height,selected)
  height=height or (detail and 68 or 46)
  local b=T.make("TextButton",scroll,{Size=UDim2.new(1,-3,0,height),BackgroundColor3=selected and T.c.soft or T.c.raised,
   BorderSizePixel=0,Text="",AutoButtonColor=callback~=nil})
- T.make("UICorner",b,{CornerRadius=UDim.new(0,8)})
+ T.make("UICorner",b,{CornerRadius=UDim.new(0,5)})
  T.stroke(b,selected and (accent or T.c.gold) or T.c.border,selected and 2 or 1)
- T.rect(b,0,0,4,height,accent or T.c.blue,0,3)
+ if selected then T.rect(b,0,height-3,4,3,accent or T.c.green,0,false) end
  T.label(b,title,14,4,1000,detail and 28 or height-8,{size=15,bold=true,truncate=true})
  -- The label must fit the list's current width rather than overflow.
  local titleLabel=b:FindFirstChildOfClass("TextLabel")
