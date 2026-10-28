@@ -1,0 +1,1888 @@
+<?xml version='1.0' encoding='utf-8'?>
+<roblox version="4">
+  <External>null</External>
+  <External>nil</External>
+  <Item class="Workspace" referent="RBX00000001">
+    <Properties>
+      <string name="Name">Workspace</string>
+    </Properties>
+    <Item class="Part" referent="RBX00000002">
+      <Properties>
+        <string name="Name">Dark Fantasy Base</string>
+        <bool name="Anchored">true</bool>
+        <bool name="CanCollide">true</bool>
+        <Vector3 name="Size">
+          <X>120</X>
+          <Y>1</Y>
+          <Z>120</Z>
+        </Vector3>
+        <CoordinateFrame name="CFrame">
+          <X>0</X>
+          <Y>-1</Y>
+          <Z>0</Z>
+          <R00>1</R00>
+          <R01>0</R01>
+          <R02>0</R02>
+          <R10>0</R10>
+          <R11>1</R11>
+          <R12>0</R12>
+          <R20>0</R20>
+          <R21>0</R21>
+          <R22>1</R22>
+        </CoordinateFrame>
+        <Color3 name="Color">
+          <R>0.1</R>
+          <G>0.12</G>
+          <B>0.16</B>
+        </Color3>
+      </Properties>
+    </Item>
+    <Item class="SpawnLocation" referent="RBX00000003">
+      <Properties>
+        <string name="Name">Start Spawn</string>
+        <bool name="Anchored">true</bool>
+        <bool name="Neutral">true</bool>
+        <Vector3 name="Size">
+          <X>8</X>
+          <Y>1</Y>
+          <Z>8</Z>
+        </Vector3>
+        <CoordinateFrame name="CFrame">
+          <X>0</X>
+          <Y>1</Y>
+          <Z>0</Z>
+          <R00>1</R00>
+          <R01>0</R01>
+          <R02>0</R02>
+          <R10>0</R10>
+          <R11>1</R11>
+          <R12>0</R12>
+          <R20>0</R20>
+          <R21>0</R21>
+          <R22>1</R22>
+        </CoordinateFrame>
+        <Color3 name="Color">
+          <R>0.39</R>
+          <G>0.31</G>
+          <B>0.54</B>
+        </Color3>
+        <float name="Transparency">0.1</float>
+      </Properties>
+    </Item>
+  </Item>
+  <Item class="ReplicatedStorage" referent="RBX00000004">
+    <Properties>
+      <string name="Name">ReplicatedStorage</string>
+    </Properties>
+    <Item class="Folder" referent="RBX00000005">
+      <Properties>
+        <string name="Name">Shared</string>
+      </Properties>
+      <Item class="ModuleScript" referent="RBX00000006">
+        <Properties>
+          <string name="Name">Adventure</string>
+          <ProtectedString name="Source"><![CDATA[--!strict
+local A={}
+local TYPES={"Combat","Combat","Combat","Combat","Combat","Event","Event","Event","Merchant","Rest","Special"}
+function A.Generate()
+ local map={rows={},row=1,available={1,2,3},history={},selected=nil,completed=false}
+ for row=1,10 do
+  local nodes={}
+  local count=(row==10 and 1 or 3)
+  for i=1,count do
+   local kind=row==10 and "Boss" or TYPES[math.random(#TYPES)]
+   local targets={}
+   if row==9 then targets={1}
+   elseif row<9 then
+    -- Always connect to the same column, with random side branches.
+    targets={i}
+    for t=1,3 do if t~=i and math.abs(t-i)<=1 and math.random()<.38 then table.insert(targets,t) end end
+   end
+   nodes[i]={id=row.."-"..i,kind=kind,col=i,links=targets}
+  end
+  map.rows[row]=nodes
+ end
+ return map
+end
+function A.Allowed(map,index)
+ if typeof(index)~="number" or index%1~=0 then return false end
+ return map.selected==nil and table.find(map.available,index)~=nil and map.rows[map.row] and map.rows[map.row][index]~=nil
+end
+function A.Choose(map,index)
+ if not A.Allowed(map,index) then return nil end
+ map.selected=index
+ return map.rows[map.row][index].kind
+end
+function A.Finish(map)
+ if not map.selected then return false end
+ local node=map.rows[map.row][map.selected]
+ table.insert(map.history,{row=map.row,col=map.selected,kind=node.kind})
+ map.available=table.clone(node.links)
+ map.selected=nil
+ map.row+=1
+ if map.row>10 then map.completed=true end
+ return true
+end
+function A.RandomEvent()
+ local options={"Treasure","Mysterious Stranger","Ancient Shrine","Training Ground","Forgotten Crypt","Bandit Ambush"}
+ return options[math.random(#options)]
+end
+function A.EventChoices(name)
+ if name=="Treasure" then return {{id="open",label="Open the chest (+gold, materials)"},{id="skip",label="Leave it"}} end
+ if name=="Mysterious Stranger" then return {{id="talk",label="Talk cautiously (+XP)"},{id="fight",label="Attack (combat)"},{id="skip",label="Ignore and return"}} end
+ if name=="Ancient Shrine" then return {{id="pray",label="Pray for a blessing"},{id="curse",label="Accept power and a curse"},{id="skip",label="Pass by"}} end
+ if name=="Training Ground" then return {{id="train",label="Train (+XP)"},{id="rest",label="Rest (+HP)"},{id="skip",label="Leave"}} end
+ if name=="Forgotten Crypt" then return {{id="loot",label="Search for relics (+loot, risk)"},{id="skip",label="Leave"}} end
+ return {{id="fight",label="Fight the bandits"},{id="bribe",label="Pay 20 gold to escape"},{id="skip",label="Sneak away"}}
+end
+return A
+]]></ProtectedString>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="RBX00000007">
+        <Properties>
+          <string name="Name">Battle</string>
+          <ProtectedString name="Source"><![CDATA[--!strict
+-- Server-side battle actions, targeting, cooldowns and status ticks.
+local Content=require(script.Parent.Content)
+local Enemies=require(script.Parent.Enemies)
+local Progress=require(script.Parent.Progress)
+local B={}
+local function living(b)
+ for _,enemy in ipairs(b.enemies) do if enemy.hp>0 then return enemy end end
+ return nil
+end
+local function aliveCount(b)
+ local n=0;for _,e in ipairs(b.enemies) do if e.hp>0 then n+=1 end end
+ return n
+end
+local function addLog(b,text)
+ table.insert(b.log,1,text)
+ if #b.log>120 then table.remove(b.log) end
+end
+local function status(enemy,name,turns)
+ enemy.status[name]=math.max(enemy.status[name] or 0,turns)
+end
+local function hurtEnemy(run,b,enemy,amount,magical)
+ if enemy.hp<=0 then return end
+ local stats=Progress.Stats(run)
+ local defense=math.floor(enemy.defense*.45)
+ local damage=math.max(1,math.floor(amount-defense))
+ if magical then damage=math.max(1,math.floor(amount-math.floor(enemy.defense*.2))) end
+ local critical=math.random(1,100)<=math.min(50,5+math.floor(stats.Luck*.5))
+ if critical then damage=math.floor(damage*1.5) end
+ enemy.hp=math.max(0,enemy.hp-damage)
+ addLog(b,enemy.name.." took "..damage..(critical and " CRIT!" or "").." damage")
+ if run.flags.Lifesteal then Progress.Heal(run,math.floor(damage*.15),0) end
+ if enemy.hp<=0 then
+  addLog(b,enemy.name.." defeated!")
+  Progress.OnKill(run,enemy.name)
+ end
+end
+local function barrierDamage(run,b,amount)
+ local shield=math.min(b.barrier,amount)
+ b.barrier-=shield;amount-=shield
+ if shield>0 then addLog(b,"Barrier absorbed "..shield.." damage") end
+ if b.guard then amount=math.floor(amount*.5) end
+ if run.flags.Fortify then amount=math.floor(amount*.85) end
+ if run.flags.Berserker then amount=math.ceil(amount*1.1) end
+ run.hp=math.max(0,run.hp-amount)
+end
+function B.Start(run,kind,forced)
+ local b={enemies={},round=1,log={},guard=false,barrier=0,cooldowns={},effects={},battleKind=kind}
+ local list={}
+ if forced then table.insert(list,forced)
+ elseif kind=="Boss" then
+  local keys={"Goblin King","Ancient Guardian","Plague Queen","Dragon","Corrupted Hero"}
+  table.insert(list,keys[math.random(#keys)])
+ else
+  local names={}
+  for name,e in pairs(Enemies.Normal) do if e.level<=math.min(7,run.level+3) then table.insert(names,name) end end
+  table.sort(names)
+  local count=math.random(1,math.min(3,1+math.floor(run.stage/3)))
+  for i=1,count do table.insert(list,names[math.random(#names)]) end
+ end
+ for i,name in ipairs(list) do
+  local ref=Enemies.Normal[name] or Enemies.Boss[name] or Enemies.Elite[name] or {hp=35,attack=8,defense=3,speed=6,level=3,skills={}}
+  local scale=1+math.max(0,run.stage-ref.level)*.10
+  table.insert(b.enemies,{id=i,name=name,level=ref.level,hp=math.floor(ref.hp*scale),maxHP=math.floor(ref.hp*scale),attack=math.floor(ref.attack*scale),defense=ref.defense,speed=ref.speed,skills=ref.skills,status={}})
+ end
+ run.combat=b
+ if run.class=="Hunter" then
+  local strongest=b.enemies[1]
+  for _,e in ipairs(b.enemies) do if e.maxHP>strongest.maxHP then strongest=e end end
+  if run.trap=="Spike" then strongest.hp=math.max(0,strongest.hp-10-2*run.level);addLog(b,"PREPARED SPIKE TRAP hit "..strongest.name)
+  elseif run.trap=="Venom" then status(strongest,"Poison",4);addLog(b,"VENOM TRAP poisoned "..strongest.name)
+  else status(strongest,"Stun",1);addLog(b,"SNARE TRAP stunned "..strongest.name) end
+  if strongest.hp==0 then Progress.OnKill(run,strongest.name) end
+ end
+ if run.class=="Necromancer" then b.zombie=Progress.ZombieStats(run) end
+ addLog(b,kind=="Boss" and "BOSS ENCOUNTER!" or "Enemies approach!")
+ return b
+end
+local function skill(run,b,enemy,name)
+ local s=Progress.Stats(run)
+ local costs={ ["Power Strike"]=0,["Battle Cry"]=0,["Fireball"]=7,["Crafted Spell"]=9,["Sniper Shot"]=0,["Volley"]=5,["Soul Bolt"]=5,["Zombie Strike"]=0,["Holy Light"]=7,["Smite"]=5,["Throw Gold"]=0,["Coin Flick"]=0 }
+ local cost=costs[name]
+ if cost==nil or run.mp<cost or (b.cooldowns[name] or 0)>0 then return false end
+ run.mp-=cost
+ local damage=(6+s.Strength*1.6)*(1+(b.cry and b.cry.power or 0))
+ local magic=8+s.Intelligence*1.9
+ if name=="Holy Light" then
+  Progress.Heal(run,math.floor(18+s.Holiness*2),0);b.cooldowns[name]=4;addLog(b,"Holy Light restored health")
+ elseif name=="Battle Cry" then
+  local power,shield,heal,blast,speed,defense,duration=.12,0,0,0,0,0,3
+  for i=1,9 do
+   if run.cryOwned[tostring(i)] then
+    local n=run.cryNodes[i];power+=n.power or 0;shield+=n.barrier or 0;heal+=n.heal or 0
+    blast+=n.blast or 0;speed+=n.speed or 0;defense+=n.defense or 0;duration+=n.duration or 0
+   end
+  end
+  b.cry={turns=duration,power=power,speed=speed,defense=defense}
+  b.barrier+=shield;Progress.Heal(run,heal,0)
+  for _,e in ipairs(b.enemies) do if e.hp>0 and blast>0 then hurtEnemy(run,b,e,blast,true) end end
+  b.cooldowns[name]=4;addLog(b,"Battle Cry shakes the arena!")
+ elseif name=="Crafted Spell" then
+  local sp=run.spell
+  b.cooldowns[name]=3
+  local power=magic+(sp.element=="Fire" and 3 or 0)
+  for _,e in ipairs(b.enemies) do
+   if e.hp>0 and (sp.area or e==enemy) then
+    hurtEnemy(run,b,e,power,true)
+    if e.hp>0 and sp.effect~="None" then status(e,sp.effect,3) end
+    if e.hp>0 and sp.element=="Ice" then status(e,"Slow",2) end
+   end
+  end
+ elseif name=="Volley" then
+  for _,e in ipairs(b.enemies) do if e.hp>0 then hurtEnemy(run,b,e,damage*.7*Progress.TrophyBonus(run),false) end end
+  b.cooldowns[name]=3
+ elseif name=="Sniper Shot" then hurtEnemy(run,b,enemy,damage*1.75*Progress.TrophyBonus(run),false);b.cooldowns[name]=3
+ elseif name=="Fireball" then
+  hurtEnemy(run,b,enemy,magic*1.3,true);if enemy.hp>0 then status(enemy,"Burn",3) end;b.cooldowns[name]=2
+ elseif name=="Soul Bolt" then hurtEnemy(run,b,enemy,magic*1.2,true);b.cooldowns[name]=2
+ elseif name=="Smite" then hurtEnemy(run,b,enemy,magic+s.Holiness*1.4,true);b.cooldowns[name]=3
+ elseif name=="Throw Gold" then
+  if run.gold<10 then return false end
+  run.gold-=10;hurtEnemy(run,b,enemy,damage*2,true);b.cooldowns[name]=2
+ else
+  local mult=name=="Power Strike" and 1.65 or 1
+  hurtEnemy(run,b,enemy,damage*mult*Progress.TrophyBonus(run),false)
+  if name=="Power Strike" then b.cooldowns[name]=2 end
+ end
+ return true
+end
+local function enemyTurn(run,b)
+ for _,enemy in ipairs(b.enemies) do
+  if enemy.hp>0 then
+   if enemy.status.Stun and enemy.status.Stun>0 then addLog(b,enemy.name.." is stunned")
+   else
+    local s=Progress.Stats(run)
+    local defense=s.Defense+(b.cry and b.cry.defense or 0)
+    local amount=math.max(1,math.floor(enemy.attack-defense*.4))
+    if math.random()<.13 then amount=math.floor(amount*1.3) end
+    if math.random(1,100)>math.min(30,math.floor(s.Speed*.7)) then barrierDamage(run,b,amount);addLog(b,enemy.name.." attacks for "..amount)
+    else addLog(b,"Dodged "..enemy.name.."'s attack") end
+    if enemy.skills and (table.find(enemy.skills,"VenomBite") or table.find(enemy.skills,"Infect") or table.find(enemy.skills,"AcidSpit")) and math.random()<.17 then b.effects.Poison=math.max(b.effects.Poison or 0,3) end
+   end
+  end
+ end
+end
+local function tick(run,b)
+ for name,remaining in pairs(b.effects) do
+  if remaining>0 then
+   if name=="Poison" then barrierDamage(run,b,math.max(2,math.ceil(Progress.Stats(run).MaxHP*.04)));addLog(b,"Poison hurts you") end
+   b.effects[name]-=1
+  end
+ end
+ for _,enemy in ipairs(b.enemies) do
+  if enemy.hp>0 then
+   for name,turns in pairs(enemy.status) do
+    if turns>0 then
+     if name=="Poison" then enemy.hp=math.max(0,enemy.hp-math.max(2,math.ceil(enemy.maxHP*.04))) end
+     if name=="Burn" then enemy.hp=math.max(0,enemy.hp-7) end
+     enemy.status[name]-=1
+    end
+   end
+   if enemy.hp==0 then addLog(b,enemy.name.." fell to a status effect");Progress.OnKill(run,enemy.name) end
+  end
+ end
+end
+function B.Action(run,action,index,skillName)
+ local b=run.combat;if not b or run.hp<=0 then return false,"No battle" end
+ if not table.find({"Attack","Skill","Defend","Item","Escape"},action) then return false,"Invalid action" end
+ local target=b.enemies[index] or living(b)
+ if action~="Defend" and action~="Item" and action~="Escape" and (not target or target.hp<=0) then return false,"Choose a living enemy" end
+ b.guard=false
+ if action=="Escape" then
+  if b.battleKind=="Boss" then return false,"You cannot escape a boss battle" end
+  if math.random()<.70 then addLog(b,"You escaped safely!");return true,"Escaped" end
+  addLog(b,"Escape failed! Enemies advance.")
+ elseif action=="Attack" then
+  local s=Progress.Stats(run)
+  hurtEnemy(run,b,target,(7+s.Strength*1.8)*(1+(b.cry and b.cry.power or 0))*(run.flags.Berserker and 1.3 or 1)*Progress.TrophyBonus(run),false)
+ elseif action=="Skill" then
+  if skillName=="Guard" then
+   b.guard=true;b.barrier+=3;addLog(b,"Guard protects you with a barrier")
+  else
+   if not table.find(Content.BaseSkills[run.class],skillName) then return false,"Unknown skill" end
+   if not skill(run,b,target,skillName) then return false,"Skill unavailable: cooldown, mana, or gold" end
+  end
+ elseif action=="Defend" then b.guard=true;b.barrier+=3;addLog(b,"You brace for impact")
+ elseif action=="Item" then
+  if not Content.Items[skillName] or Content.Items[skillName].kind~="Consumable" or (run.inventory[skillName] or 0)<1 then return false,"Item unavailable" end
+  local item=Content.Items[skillName]
+  run.inventory[skillName]-=1;if run.inventory[skillName]==0 then run.inventory[skillName]=nil end
+  Progress.Heal(run,item.heal or 0,item.mana or 0)
+  if item.cure then b.effects[item.cure]=nil end
+  addLog(b,"Used "..skillName)
+ end
+ if aliveCount(b)==0 then return true,"Victory" end
+ for n,cd in pairs(b.cooldowns) do if cd>0 then b.cooldowns[n]=cd-1 end end
+ if b.zombie and living(b) then
+  local foe=living(b)
+  foe.hp=math.max(0,foe.hp-b.zombie.attack)
+  addLog(b,"Zombie strikes "..foe.name.." for "..b.zombie.attack)
+  if foe.hp==0 then Progress.OnKill(run,foe.name) end
+ end
+ if aliveCount(b)==0 then return true,"Victory" end
+ tick(run,b)
+ if aliveCount(b)==0 then return true,"Victory" end
+ if run.hp>0 then enemyTurn(run,b) end
+ if b.cry then b.cry.turns-=1;if b.cry.turns<=0 then b.cry=nil end end
+ b.round+=1
+ if run.hp<=0 then return true,"Defeat" end
+ return true,"Continue"
+end
+return B
+]]></ProtectedString>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="RBX00000008">
+        <Properties>
+          <string name="Name">Content</string>
+          <ProtectedString name="Source"><![CDATA[--!strict
+-- Config only: class/race/trait choices, items, blessings and upgrades.
+local D = {}
+D.Stats = {"Strength","Defense","Speed","Intelligence","Luck","Charisma","Holiness"}
+D.Races = {
+ Human = {description="Versatile explorer", stats={Strength=2,Defense=2,Speed=2,Intelligence=2,Luck=2,Charisma=2,Holiness=2}},
+ Elf = {description="Magical and swift", stats={Intelligence=5,Speed=4,Luck=3}},
+ Dwarf = {description="Durable frontliner", stats={Strength=4,Defense=5}},
+ Orc = {description="Powerful physical fighter", stats={Strength=6}},
+}
+D.Traits = {
+ Lucky={description="+3 Luck and improved loot", stats={Luck=3}},
+ ["Glass Cannon"]={description="+40% damage; -20% maximum HP", stats={}},
+ Tough={description="+10 HP, +3 Defense, +1 Strength", stats={Defense=3,Strength=1}},
+ Swift={description="+3 Speed", stats={Speed=3}},
+ Brilliant={description="+3 Intelligence", stats={Intelligence=3}},
+ Charismatic={description="+3 Charisma", stats={Charisma=3}},
+ Holy={description="+3 Holiness", stats={Holiness=3}},
+ Balanced={description="+1 to every attribute", stats={Strength=1,Defense=1,Speed=1,Intelligence=1,Luck=1,Charisma=1,Holiness=1}},
+}
+D.Classes = {
+ Warrior="Randomized Battle Cry skill tree. Earn points as you level and unlock new effects.",
+ Mage="Build your own spell by selecting range and elemental effects within a ten-point budget.",
+ Hunter="Each enemy killed grants a trophy. Prepare traps and complete bounty board contracts.",
+ Necromancer="Build a zombie companion by equipping fallen monsters' body parts.",
+ Paladin="Earn and stack unlimited blessings. Cleanse curses with Divine Charges.",
+ Merchant="Open a traveling shop at camp and refresh its stock with MP.",
+}
+D.Items = {
+ ["Stick"]={kind="Weapon",price=3,stat="Strength",bonus=1},
+ ["Iron Sword"]={kind="Weapon",price=55,stat="Strength",bonus=3},
+ ["Steel Sword"]={kind="Weapon",price=95,stat="Strength",bonus=5},
+ ["Nature Staff"]={kind="Weapon",price=85,stat="Intelligence",bonus=4},
+ ["Bone Bow"]={kind="Weapon",price=85,stat="Speed",bonus=4},
+ ["Wooden Shield"]={kind="Shield",price=45,stat="Defense",bonus=3},
+ ["Leather Armor"]={kind="Armor",price=65,stat="Defense",bonus=4},
+ ["Knight Armor"]={kind="Armor",price=180,stat="Defense",bonus=8},
+ ["Lucky Ring"]={kind="Ring",price=100,stat="Luck",bonus=4},
+ ["Health Potion"]={kind="Consumable",price=25,heal=30},
+ ["Major Health Potion"]={kind="Consumable",price=55,heal=60},
+ ["Mana Potion"]={kind="Consumable",price=25,mana=20},
+ ["Antidote"]={kind="Consumable",price=20,cure="Poison"},
+ ["Iron Ore"]={kind="Material",price=8},
+ ["Oak Wood"]={kind="Material",price=7},
+ ["Herbs"]={kind="Material",price=6},
+ ["Wolf Pelt"]={kind="Material",price=10},
+ ["Goblin Tooth"]={kind="Material",price=10},
+ ["Bone Fragment"]={kind="Part",price=10,stat="Defense",bonus=2},
+ ["Wolf Fang"]={kind="Part",price=12,stat="Strength",bonus=2},
+ ["Venom Sac"]={kind="Part",price=20,stat="Intelligence",bonus=2},
+ ["Dragon Scale"]={kind="Part",price=90,stat="Defense",bonus=7},
+ ["Rabbit Hide"]={kind="Material",price=8},
+ ["Spider Silk"]={kind="Material",price=12},
+ ["Monster Essence"]={kind="Part",price=15,stat="Strength",bonus=1},
+}
+D.Recipes = {
+ {name="Health Potion",need={Herbs=2},qty=1},
+ {name="Iron Sword",need={["Iron Ore"]=3,["Oak Wood"]=1},qty=1},
+ {name="Wooden Shield",need={["Oak Wood"]=3},qty=1},
+ {name="Leather Armor",need={["Wolf Pelt"]=2,["Rabbit Hide"]=1},qty=1},
+ {name="Steel Sword",need={["Iron Ore"]=5,["Goblin Tooth"]=1},qty=1},
+}
+D.Blessings={
+ ["Blessing of Strength"]={text="+20% Strength", stat="Strength",percent=.20},
+ ["Blessing of Fortune"]={text="+15% Luck", stat="Luck",percent=.15},
+ ["Blessing of Light"]={text="+25% Holiness", stat="Holiness",percent=.25},
+ ["Blessing of Wisdom"]={text="+20% Intelligence",stat="Intelligence",percent=.20},
+ ["Blessing of Valor"]={text="+25% Defense",stat="Defense",percent=.25},
+ ["Blessing of Purity"]={text="+25% Holiness",stat="Holiness",percent=.25},
+}
+D.Curses={
+ ["Curse of Weakness"]={stat="Strength",percent=-.20},
+ ["Curse of Slowness"]={stat="Speed",percent=-.30},
+ ["Curse of Frailty"]={stat="Defense",percent=-.20},
+ ["Curse of Misfortune"]={stat="Luck",percent=-.30},
+}
+D.Upgrades={
+ {name="Vigor",desc="+15 maximum HP", bonusHP=15},
+ {name="Power",desc="+3 Strength",stat="Strength",amount=3},
+ {name="Fortitude",desc="+3 Defense",stat="Defense",amount=3},
+ {name="Swiftness",desc="+4 Speed",stat="Speed",amount=4},
+ {name="Fortune",desc="+5 Luck",stat="Luck",amount=5},
+ {name="Brilliance",desc="+3 Intelligence",stat="Intelligence",amount=3},
+ {name="Faith",desc="+3 Holiness",stat="Holiness",amount=3},
+ {name="Charm",desc="+3 Charisma",stat="Charisma",amount=3},
+ {name="Iron Skin",desc="+10 HP, +5 Defense",bonusHP=10,stat="Defense",amount=5},
+ {name="Lifesteal",desc="Heal 15% damage dealt",flag="Lifesteal"},
+ {name="Berserker's Fury",desc="Deal 30% more damage; take 10% more",flag="Berserker"},
+ {name="Fortify",desc="Take 15% less damage",flag="Fortify"},
+}
+D.CryNodes={
+ {name="Rallying Roar",desc="Battle Cry adds +15% damage",power=.15},
+ {name="Iron Chorus",desc="Battle Cry grants 6 barrier",barrier=6},
+ {name="War Drums",desc="Battle Cry grants 3 Speed",speed=3},
+ {name="Bloody Oath",desc="Battle Cry restores 6 HP",heal=6},
+ {name="Thunder Shout",desc="Battle Cry deals 6 damage to foes",blast=6},
+ {name="Stalwart Call",desc="Battle Cry grants 4 Defense",defense=4},
+ {name="Endless Echo",desc="Battle Cry duration +1 turn",duration=1},
+ {name="Overwhelming Voice",desc="Battle Cry damage +10%",power=.10},
+ {name="Last Stand",desc="Battle Cry restores 8 HP",heal=8},
+ {name="War Banner",desc="Battle Cry grants 4 barrier",barrier=4},
+ {name="Death Knell",desc="Battle Cry blasts for 4 more damage",blast=4},
+}
+D.BaseSkills={
+ Warrior={"Power Strike","Battle Cry"}, Mage={"Fireball","Crafted Spell"},
+ Hunter={"Sniper Shot","Volley"}, Necromancer={"Soul Bolt","Zombie Strike"},
+ Paladin={"Holy Light","Smite"}, Merchant={"Throw Gold","Coin Flick"},
+}
+return D
+]]></ProtectedString>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="RBX00000009">
+        <Properties>
+          <string name="Name">Enemies</string>
+          <ProtectedString name="Source"><![CDATA[--!strict
+-- Values transcribed from the supplied catalog. Skills simplified in first build.
+local E = { Normal = {}, Boss = {}, Elite = {} }
+E.Normal["Rabbit"]={level=1,hp=20,attack=5,defense=1,speed=12,luck=10,skills={"Bite","Hop"}}
+E.Normal["Slime"]={level=1,hp=25,attack=3,defense=5,speed=2,luck=2,skills={"AcidSpit"}}
+E.Normal["Goblin"]={level=2,hp=35,attack=8,defense=4,speed=6,luck=3,skills={"Bite","ClubSwing"}}
+E.Normal["Wolf"]={level=3,hp=30,attack=8,defense=3,speed=7,luck=5,skills={"Bite","Howl"}}
+E.Normal["Plague Rat"]={level=2,hp=20,attack=6,defense=1,speed=12,luck=3,skills={"Infect","Bite","DiseaseCloud"}}
+E.Normal["Zombie"]={level=2,hp=35,attack=8,defense=2,speed=4,luck=2,skills={"DiseaseBite","Regenerate","Grab"}}
+E.Normal["Forest Spider"]={level=3,hp=30,attack=6,defense=2,speed=10,luck=5,skills={"VenomBite","WebShot"}}
+E.Normal["Skeleton Archer"]={level=4,hp=28,attack=10,defense=3,speed=8,luck=4,skills={"PowerShot","PiercingArrow","QuickShot"}}
+E.Normal["Skeleton Knight"]={level=4,hp=40,attack=10,defense=8,speed=6,luck=3,skills={"ShieldBash","DefensiveStance","SwordSlash"}}
+E.Normal["Goblin Scout"]={level=2,hp=25,attack=7,defense=2,speed=14,luck=8,skills={"QuickStab","SmokeBomb","ThrowingKnife"}}
+E.Normal["Goblin Warrior"]={level=3,hp=35,attack=10,defense=5,speed=10,luck=5,skills={"SlashSkill","ShieldBlock","BattleCry"}}
+E.Normal["Goblin Shaman"]={level=4,hp=30,attack=6,defense=3,speed=8,luck=6,skills={"FireBolt","HealingTotem","TribalBlessing"}}
+E.Normal["Orc Brute"]={level=5,hp=55,attack=14,defense=6,speed=4,luck=2,skills={"GroundSlam","Cleave"}}
+E.Normal["Orc Berserker"]={level=5,hp=45,attack=15,defense=3,speed=12,luck=3,skills={"Frenzy","WildSwing","RecklessCharge"}}
+E.Normal["Troll"]={level=4,hp=90,attack=15,defense=10,speed=2,luck=2,skills={"ClubSwing","Howl"}}
+E.Normal["Vampire Bat"]={level=3,hp=25,attack=10,defense=2,speed=16,luck=5,skills={"BloodBite","Screech","Flyby"}}
+E.Normal["Ghost"]={level=3,hp=28,attack=8,defense=2,speed=10,luck=5,skills={"Haunt","Fade","SpiritTouch"}}
+E.Normal["Wraith"]={level=5,hp=35,attack=10,defense=3,speed=12,luck=5,skills={"SoulDrain","ShadowStrike","PhaseShift"}}
+E.Normal["Cultist"]={level=4,hp=30,attack=6,defense=3,speed=8,luck=5,skills={"DarkRitual","CurseSkill","Sacrifice"}}
+E.Normal["Dark Mage"]={level=6,hp=35,attack=5,defense=3,speed=8,luck=6,skills={"FireballSkill","IceLance","ArcaneBlast","ManaShield"}}
+E.Normal["Acid Slime"]={level=3,hp=30,attack=8,defense=2,speed=6,luck=3,skills={"AcidSpit","CorrodeArmor","Split"}}
+E.Normal["Fire Elemental"]={level=5,hp=35,attack=10,defense=3,speed=10,luck=5,skills={"FireballSkill","FlameWave","Ignite"}}
+E.Normal["Ice Elemental"]={level=5,hp=40,attack=8,defense=5,speed=8,luck=5,skills={"IceShard","FrostNova","FreezeSkill"}}
+E.Normal["Storm Elemental"]={level=6,hp=35,attack=8,defense=3,speed=14,luck=5,skills={"LightningBolt","ChainLightning","StaticCharge"}}
+E.Normal["Treant"]={level=6,hp=60,attack=12,defense=10,speed=4,luck=3,skills={"RootSmash","Regrowth","RootSnare"}}
+E.Normal["Ent Sapling"]={level=3,hp=25,attack=6,defense=4,speed=6,luck=3,skills={"HealSkill","NaturesBlessing","VineWhip"}}
+E.Normal["Cave Troll"]={level=7,hp=80,attack=16,defense=8,speed=5,luck=3,skills={"ClubSmash","Regenerate","BoulderThrow"}}
+E.Normal["Mimic"]={level=5,hp=45,attack=14,defense=6,speed=8,luck=10,skills={"SurpriseBite","TongueLash","Devour"}}
+E.Normal["Bandit Rogue"]={level=3,hp=30,attack=10,defense=3,speed=14,luck=10,skills={"Backstab","StealGold","SmokeBomb"}}
+E.Normal["Bandit Captain"]={level=5,hp=45,attack=14,defense=6,speed=10,luck=6,skills={"Rally","SteelSlash","CommandStrike"}}
+E.Normal["Harpy"]={level=4,hp=30,attack=10,defense=2,speed=16,luck=5,skills={"DiveBomb","Screech","WingGust"}}
+E.Normal["Crystal Golem"]={level=6,hp=55,attack=12,defense=12,speed=4,luck=3,skills={"CrystalPunch","CrystalBarrier","CrystalReflection"}}
+E.Boss["Dragon"]={level=10,hp=200,attack=25,defense=15,speed=8,luck=10,skills={"Fireball","ClubSwing"}}
+E.Boss["Necromancer"]={level=8,hp=150,attack=10,defense=10,speed=12,luck=8,skills={"RaiseDead","Fireball"}}
+E.Boss["Goblin King"]={level=8,hp=150,attack=20,defense=12,speed=7,luck=8,skills={"ClubSwing","Howl","BattleCry"}}
+E.Boss["Fallen Knight"]={level=10,hp=250,attack=22,defense=15,speed=8,luck=10,skills={"CrushingSlash","ShieldWall","IntimidatingRoar","Execute"}}
+E.Boss["Ancient Guardian"]={level=5,hp=400,attack=18,defense=20,speed=5,luck=5,skills={"CrushingSlash","Earthquake","ShieldWall","Cleave"}}
+E.Boss["Plague Queen"]={level=8,hp=200,attack=14,defense=8,speed=18,luck=12,skills={"VenomBite","ToxicCloud","PoisonBite","AcidSpit"}}
+E.Boss["Cursed King"]={level=11,hp=300,attack=20,defense=14,speed=10,luck=10,skills={"CrushingSlash","IntimidatingRoar","SoulTax","ShieldWall","Execute"}}
+E.Boss["Arcane Construct"]={level=14,hp=280,attack=10,defense=12,speed=12,luck=8,skills={"Fireball","Meteor","Overload","ShieldWall"}}
+E.Boss["Beast Alpha"]={level=17,hp=350,attack=26,defense=14,speed=14,luck=10,skills={"Howl","ClubSwing","Cleave","BattleCry"}}
+E.Boss["Corrupted Hero"]={level=20,hp=500,attack=28,defense=18,speed=16,luck=15,skills={"CrushingSlash","ShieldWall","BattleCry","Fireball","PoisonDart","Execute"}}
+E.Elite["Giant Rabbit"]={level=5,hp=60,attack=12,defense=6,speed=10,luck=15,skills={"Bite","Hop"}}
+E.Elite["Goblin Chief"]={level=6,hp=80,attack=15,defense=8,speed=6,luck=5,skills={"ClubSwing","Howl","BattleCry"}}
+return E
+]]></ProtectedString>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="RBX00000010">
+        <Properties>
+          <string name="Name">Progress</string>
+          <ProtectedString name="Source"><![CDATA[--!strict
+-- Shared stat/progression functions. Invoked only by the server.
+local Content = require(script.Parent.Content)
+local P = {}
+local function add(t, key, n) t[key] = (t[key] or 0) + n end
+P.Add = add
+function P.Stats(run)
+ local out = {}
+ for _,stat in ipairs(Content.Stats) do
+  out[stat] = 3 + (Content.Races[run.race].stats[stat] or 0) + (Content.Traits[run.trait].stats[stat] or 0) + (run.bonusStats[stat] or 0)
+ end
+ for slot,itemName in pairs(run.equipment) do
+  local item = Content.Items[itemName]
+  if item and item.stat then out[item.stat] += item.bonus end
+ end
+ for name,count in pairs(run.blessings) do
+  local b=Content.Blessings[name]
+  if b then out[b.stat] *= (1+b.percent)^count end
+ end
+ for name,count in pairs(run.curses) do
+  local c=Content.Curses[name]
+  if c then out[c.stat] *= (1+c.percent)^count end
+ end
+ for k,v in pairs(out) do out[k]=math.max(0,math.floor(v+.5)) end
+ out.MaxHP=math.floor((50+out.Strength*5+out.Defense*3+10*(run.level-1)+run.bonusHP)*(run.trait=="Glass Cannon" and .8 or 1))
+ out.MaxMP=30+out.Intelligence*3
+ return out
+end
+function P.New(race,className,trait)
+ local r={race=race,class=className,trait=trait,level=1,xp=0,gold=80,bonusStats={},bonusHP=0,flags={},
+  inventory={["Health Potion"]=2,["Mana Potion"]=1,["Herbs"]=1},equipment={Weapon="Stick"},
+  blessings={},curses={},trophies={},trophyTotal=0,bounty=nil,trap="Spike",cryNodes={},cryOwned={},cryPoints=0,
+  spell={area=false,element="Fire",effect="None",name="Ember Bolt",points=4},zombieParts={},
+  shop={},kills=0,wins=0,bosses=0,stage=1,log={},timeStart=os.time()}
+ local s=P.Stats(r)
+ r.hp=s.MaxHP;r.mp=s.MaxMP
+ if className=="Warrior" then
+  local bag=table.clone(Content.CryNodes)
+  for i=1,9 do local j=math.random(#bag);r.cryNodes[i]=table.remove(bag,j) end
+  r.cryPoints=1
+ end
+ if className=="Necromancer" then r.inventory["Bone Fragment"]=1 end
+ return r
+end
+function P.AddItem(run,name,count)
+ if not Content.Items[name] then return end
+ add(run.inventory,name,count or 1)
+end
+function P.Heal(run,hp,mp)
+ local s=P.Stats(run)
+ run.hp=math.min(s.MaxHP,run.hp+(hp or 0))
+ run.mp=math.min(s.MaxMP,run.mp+(mp or 0))
+end
+function P.LevelUp(run)
+ local gained=0
+ while run.xp >= run.level*35 do
+  run.xp-=run.level*35;run.level+=1; gained+=1
+  if run.class=="Warrior" then run.cryPoints+=1 end
+ end
+ if gained>0 then P.Heal(run,12*gained,7*gained) end
+ return gained
+end
+function P.ChooseUpgrades(run)
+ local bag=table.clone(Content.Upgrades)
+ local choices={}
+ for _=1,math.min(3,#bag) do
+  local index=math.random(#bag)
+  table.insert(choices,table.remove(bag,index))
+ end
+ return choices
+end
+function P.ApplyUpgrade(run,name,choices)
+ for _,u in ipairs(choices or {}) do
+  if u.name==name then
+   if u.stat then add(run.bonusStats,u.stat,u.amount) end
+   if u.bonusHP then run.bonusHP+=u.bonusHP end
+   if u.flag then run.flags[u.flag]=true end
+   P.Heal(run,5,0)
+   return true
+  end
+ end
+ return false
+end
+function P.Bless(run,name)
+ if not Content.Blessings[name] then return false,"Unknown blessing" end
+ local distinct=0
+ for _,n in pairs(run.blessings) do if n>0 then distinct+=1 end end
+ if run.class~="Paladin" and ((run.blessings[name] or 0)>0 or distinct>=2) then
+  return false,"Other classes may hold only two different blessings, no repeats"
+ end
+ add(run.blessings,name,1)
+ return true,"Blessing received: "..name
+end
+function P.RemoveCurse(run,name)
+ if (run.curses[name] or 0)<1 then return false end
+ run.curses[name]-=1
+ if run.curses[name]==0 then run.curses[name]=nil end
+ return true
+end
+function P.OnKill(run,enemyName)
+ run.kills+=1
+ if run.class=="Hunter" then
+  add(run.trophies,enemyName,1)
+  run.trophyTotal+=1
+  if run.bounty then
+   local b=run.bounty
+   local found = (b.kind=="Any" or (b.kind=="Wild" and (string.find(enemyName,"Wolf") or string.find(enemyName,"Rabbit") or string.find(enemyName,"Harpy")))
+    or (b.kind=="Goblin" and string.find(enemyName,"Goblin")) or (b.kind=="Undead" and (string.find(enemyName,"Skeleton") or string.find(enemyName,"Zombie") or string.find(enemyName,"Ghost"))))
+   if found then
+    b.progress+=1
+    if b.progress>=b.goal then
+     run.gold+=b.gold;run.xp+=b.xp
+     run.lastBounty="Bounty complete: +"..b.gold.." gold, +"..b.xp.." XP"
+     run.bounty=nil
+    end
+   end
+  end
+ end
+ if run.class=="Necromancer" and math.random()<.3 then
+  local options={"Bone Fragment","Wolf Fang","Venom Sac","Monster Essence"}
+  P.AddItem(run,options[math.random(#options)],1)
+ end
+end
+function P.TrophyBonus(run)
+ if run.class~="Hunter" then return 1 end
+ return 1+math.min(.25,run.trophyTotal*.003)
+end
+function P.PickBounty(run,kind)
+ if run.class~="Hunter" or run.bounty then return false end
+ local defs={Any={goal=5,gold=75,xp=50},Wild={goal=3,gold=50,xp=35},Goblin={goal=2,gold=55,xp=40},Undead={goal=2,gold=65,xp=45}}
+ local d=defs[kind];if not d then return false end
+ run.bounty={kind=kind,goal=d.goal,progress=0,gold=d.gold,xp=d.xp};return true
+end
+function P.UnlockCry(run,index)
+ if run.class~="Warrior" or run.cryPoints<=0 or typeof(index)~="number" or index%1~=0 then return false end
+ if index<1 or index>9 or run.cryOwned[tostring(index)] then return false end
+ if index>3 and not run.cryOwned[index-3] then return false end
+ run.cryOwned[tostring(index)]=true;run.cryPoints-=1;return true
+end
+function P.CraftSpell(run,area,element,effect)
+ if run.class~="Mage" then return false,"Not a Mage" end
+ if typeof(area)~="boolean" or not table.find({"Fire","Ice","Arcane"},element) or not table.find({"None","Poison","Burn"},effect) then return false,"Invalid spell" end
+ local points=4+(area and 4 or 0)+(effect~="None" and 2 or 0)
+ if points>10 then return false,"Spell exceeds 10 points" end
+ run.spell={area=area,element=element,effect=effect,points=points,name=element..(area and " Wave" or " Bolt")}
+ return true,"Spell created"
+end
+function P.AddBlessingRequest(run,name)
+ if run.class~="Paladin" or not Content.Blessings[name] then return false end
+ run.pending=run.pending or {}
+ if #run.pending>=2 then return false end
+ table.insert(run.pending,{name=name,left=math.random(2,4)})
+ return true
+end
+function P.OnVictory(run)
+ run.wins+=1
+ if run.class=="Paladin" then
+  for i=#(run.pending or {}),1,-1 do
+   local p=run.pending[i];p.left-=1
+   if p.left<=0 then
+    P.Bless(run,p.name)
+    run.charges=(run.charges or 0)+1
+    table.remove(run.pending,i)
+   end
+  end
+ end
+end
+function P.Equip(run,name)
+ local item=Content.Items[name]
+ if not item or (run.inventory[name] or 0)<1 or not table.find({"Weapon","Armor","Ring","Shield"},item.kind) then return false end
+ local old=run.equipment[item.kind]
+ if old then P.AddItem(run,old,1) end
+ run.equipment[item.kind]=name;run.inventory[name]-=1
+ if run.inventory[name]==0 then run.inventory[name]=nil end
+ P.Heal(run,0,0)
+ return true
+end
+function P.Craft(run,name)
+ for _,r in ipairs(Content.Recipes) do
+  if r.name==name then
+   for ingredient,amount in pairs(r.need) do if (run.inventory[ingredient] or 0)<amount then return false end end
+   for ingredient,amount in pairs(r.need) do run.inventory[ingredient]-=amount;if run.inventory[ingredient]==0 then run.inventory[ingredient]=nil end end
+   P.AddItem(run,name,r.qty)
+   return true
+  end
+ end
+ return false
+end
+function P.ZombieStats(run)
+ local stats={hp=35,attack=5,defense=2}
+ if run.class~="Necromancer" then return stats end
+ for _,partName in pairs(run.zombieParts) do
+  local item=Content.Items[partName]
+  if item then
+   if item.stat=="Strength" then stats.attack+=item.bonus elseif item.stat=="Defense" then stats.defense+=item.bonus;stats.hp+=item.bonus*3 else stats.attack+=1 end
+  end
+ end
+ return stats
+end
+return P
+]]></ProtectedString>
+        </Properties>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="ServerScriptService" referent="RBX00000011">
+    <Properties>
+      <string name="Name">ServerScriptService</string>
+    </Properties>
+    <Item class="Script" referent="RBX00000012">
+      <Properties>
+        <string name="Name">Game</string>
+        <ProtectedString name="Source"><![CDATA[--!strict
+-- One isolated run per player. Server validates every gameplay request.
+local Players=game:GetService("Players")
+local ReplicatedStorage=game:GetService("ReplicatedStorage")
+local Shared=ReplicatedStorage:WaitForChild("Shared")
+local Content=require(Shared:WaitForChild("Content"))
+local Progress=require(Shared:WaitForChild("Progress"))
+local Adventure=require(Shared:WaitForChild("Adventure"))
+local Battle=require(Shared:WaitForChild("Battle"))
+local remote=Instance.new("RemoteFunction")
+remote.Name="RPGRequest"
+remote.Parent=ReplicatedStorage
+local sessions={}
+local lastCall={}
+local function contains(t,k) return t and t[k]~=nil end
+local function note(ctx,msg) ctx.message=msg end
+local function enterReward(ctx,text,awarded)
+ local r=ctx.run
+ if ctx.map and ctx.map.selected then Adventure.Finish(ctx.map) end
+ if ctx.map then r.stage=ctx.map.row end
+ local levels=Progress.LevelUp(r)
+ ctx.reward={summary=text,gold=awarded and awarded.gold or 0,xp=awarded and awarded.xp or 0,item=awarded and awarded.item or "",levelUps=levels,
+  choices=levels>0 and Progress.ChooseUpgrades(r) or {},selected=levels==0}
+ ctx.phase="Reward"
+end
+local function rewardCombat(ctx)
+ local r=ctx.run
+ local count=0;local value=0
+ for _,e in ipairs(r.combat.enemies) do count+=1;value+=e.level end
+ local xp=12+value*9+(r.combat.battleKind=="Boss" and 80 or 0)
+ local gold=12+value*7+(r.combat.battleKind=="Boss" and 100 or 0)
+ r.xp+=xp;r.gold+=gold
+ if r.combat.battleKind=="Boss" then r.bosses+=1 end
+ local drops={"Herbs","Oak Wood","Iron Ore","Rabbit Hide","Wolf Pelt","Goblin Tooth","Health Potion","Bone Fragment"}
+ local drop=drops[math.random(#drops)]
+ Progress.AddItem(r,drop,1)
+ Progress.OnVictory(r)
+ if r.class=="Hunter" and r.lastBounty then note(ctx,r.lastBounty);r.lastBounty=nil end
+ r.combat=nil
+ enterReward(ctx,"Combat complete!",{xp=xp,gold=gold,item=drop})
+end
+local function ensureShop(ctx)
+ ctx.shop={}
+ local names={"Health Potion","Mana Potion","Antidote","Iron Sword","Steel Sword","Nature Staff","Bone Bow","Wooden Shield","Leather Armor","Lucky Ring","Major Health Potion","Knight Armor"}
+ for i=1,6 do
+  local name=names[math.random(#names)]
+  local discount=(ctx.run.class=="Merchant" and .85 or 1)
+  table.insert(ctx.shop,{name=name,price=math.floor(Content.Items[name].price*discount)})
+ end
+end
+local function startBattle(ctx,kind,forced)
+ Battle.Start(ctx.run,kind,forced)
+ ctx.phase="Combat"
+end
+local function doEvent(ctx,choice)
+ local e=ctx.eventName
+ local legal=false
+ for _,opt in ipairs(Adventure.EventChoices(e)) do if opt.id==choice then legal=true end end
+ if not legal then return note(ctx,"Invalid event choice") end
+ local r=ctx.run
+ local reward={xp=0,gold=0,item=""}
+ local message="You safely depart."
+ if choice=="fight" then startBattle(ctx,"Event",e=="Mysterious Stranger" and "Bandit Rogue" or "Bandit Captain");return end
+ if choice=="bribe" then
+  if r.gold<20 then return note(ctx,"Not enough gold") end
+  r.gold-=20;message="You paid off the bandits."
+ elseif choice=="open" or choice=="loot" then
+  reward.gold=math.random(25,65)
+  reward.item=choice=="loot" and "Monster Essence" or "Herbs"
+  Progress.AddItem(r,reward.item,1);r.gold+=reward.gold
+  message="You found a stash of supplies."
+  if choice=="loot" then r.curses["Curse of Weakness"]=(r.curses["Curse of Weakness"] or 0)+1;message="Treasure claimed, but a curse followed!" end
+ elseif choice=="talk" or choice=="train" then
+  reward.xp=math.random(20,45);r.xp+=reward.xp;message="You learned from the encounter."
+ elseif choice=="rest" then Progress.Heal(r,40,20);message="You rested and recovered."
+ elseif choice=="pray" then
+  local names={};for n in pairs(Content.Blessings) do table.insert(names,n) end;table.sort(names)
+  local bless=names[math.random(#names)]
+  local success,msg=Progress.Bless(r,bless);message=msg
+  if success then Progress.Heal(r,5,0) end
+ elseif choice=="curse" then
+  local names={};for n in pairs(Content.Curses) do table.insert(names,n) end
+  local curse=names[math.random(#names)]
+  r.curses[curse]=(r.curses[curse] or 0)+1
+  r.bonusStats.Strength=(r.bonusStats.Strength or 0)+5
+  message="+5 Strength, but you gained "..curse
+ end
+ enterReward(ctx,message,reward)
+end
+local function handle(ctx,op,p)
+ local phase=ctx.phase
+ local r=ctx.run
+ if op=="Poll" then return end
+ if op=="Play" and phase=="Menu" then ctx.phase="Creation";return end
+ if op=="BackCreation" and phase=="Creation" then ctx.phase="Menu";return end
+ if op=="Info" and phase~="Info" then ctx.info= p and p.kind or "Info";ctx.beforeInfo=phase;ctx.phase="Info";return end
+ if op=="BackInfo" and phase=="Info" then ctx.phase=ctx.beforeInfo or "Menu";return end
+ if op=="Confirm" and phase=="Creation" then
+  if typeof(p)~="table" or not contains(Content.Races,p.race) or not contains(Content.Classes,p.class) or not contains(Content.Traits,p.trait) then return note(ctx,"Invalid character") end
+  ctx.run=Progress.New(p.race,p.class,p.trait)
+  ctx.map=Adventure.Generate()
+  ctx.phase="Camp";note(ctx,"Your adventure begins!")
+  return
+ end
+ if not r then return end
+ if op=="CampTab" and (table.find({"Camp","Inventory","Crafting","Skills","Class","Stats","Codex"},phase) or (phase=="Merchant" and not ctx.shopEvent)) then
+  local t=p and p.tab
+  if t=="Map" then ctx.phase="Map"
+  elseif table.find({"Inventory","Crafting","Skills","Class","Stats","Codex"},t) then ctx.phase=t
+  else return end
+  return
+ end
+ if op=="BackCamp" and table.find({"Map","Inventory","Crafting","Skills","Class","Stats","Codex","Merchant"},phase) then
+  if phase=="Merchant" and ctx.shopEvent then ctx.shopEvent=nil;enterReward(ctx,"You leave the traveling merchant",{});return end
+  ctx.phase="Camp";return
+ end
+ if op=="ChooseNode" and phase=="Map" then
+  local node=Adventure.Choose(ctx.map,p and p.index)
+  if not node then return note(ctx,"That node is not connected to your path") end
+  if node=="Combat" or node=="Boss" then startBattle(ctx,node)
+  elseif node=="Merchant" then ctx.shopEvent=true;ensureShop(ctx);ctx.phase="Merchant"
+  elseif node=="Rest" then Progress.Heal(r,math.ceil(Progress.Stats(r).MaxHP*.5),25);enterReward(ctx,"Resting place: your wounds have healed.",{})
+  else ctx.eventName=node=="Special" and "Ancient Shrine" or Adventure.RandomEvent();ctx.phase="Event" end
+  return
+ end
+ if op=="EventChoice" and phase=="Event" then if typeof(p)=="table" and typeof(p.choice)=="string" then doEvent(ctx,p.choice) end;return end
+ if op=="CombatAction" and phase=="Combat" then
+  if typeof(p)~="table" then return end
+  local ok,outcome=Battle.Action(r,p.action,p.index,p.skill)
+  if not ok then return note(ctx,outcome) end
+  if outcome=="Victory" then rewardCombat(ctx)
+  elseif outcome=="Defeat" then ctx.phase="Death";r.combat=nil
+  elseif outcome=="Escaped" then r.combat=nil;enterReward(ctx,"You escaped the encounter without rewards.",{}) end
+  return
+ end
+ if op=="Upgrade" and phase=="Reward" and not ctx.reward.selected then
+  if typeof(p)~="table" or typeof(p.name)~="string" then return end
+  if Progress.ApplyUpgrade(r,p.name,ctx.reward.choices) then ctx.reward.selected=true;note(ctx,"Upgrade chosen: "..p.name) end
+  return
+ end
+ if op=="Continue" and phase=="Reward" and ctx.reward.selected then
+  if ctx.map.completed then ctx.phase="Victory" else ctx.phase="Camp" end
+  return
+ end
+ if op=="NewRun" and (phase=="Death" or phase=="Victory") then
+  ctx.run=nil;ctx.map=nil;ctx.phase="Menu";ctx.reward=nil;return
+ end
+ if op=="UseItem" and (phase=="Inventory" or phase=="Camp") then
+  local name=p and p.name;local item=Content.Items[name]
+  if not item or item.kind~="Consumable" or (r.inventory[name] or 0)<1 then return end
+  r.inventory[name]-=1;if r.inventory[name]==0 then r.inventory[name]=nil end
+  Progress.Heal(r,item.heal or 0,item.mana or 0);note(ctx,"Used "..name);return
+ end
+ if op=="Equip" and phase=="Inventory" then
+  if Progress.Equip(r,p and p.name) then note(ctx,"Equipment changed") end;return
+ end
+ if op=="Craft" and phase=="Crafting" then
+  if Progress.Craft(r,p and p.name) then note(ctx,"Crafted "..p.name) else note(ctx,"Missing ingredients") end;return
+ end
+ if op=="OpenShop" and phase=="Class" and r.class=="Merchant" then
+  ctx.shopEvent=false;if #r.shop==0 then ensureShop(ctx);r.shop=ctx.shop end
+  ctx.shop=r.shop;ctx.phase="Merchant";return
+ end
+ if op=="RefreshShop" and phase=="Merchant" then
+  if ctx.shopEvent then return note(ctx,"Traveling merchants cannot refresh") end
+  if r.mp<20 then return note(ctx,"Refresh costs 20 MP") end
+  r.mp-=20;ensureShop(ctx);r.shop=ctx.shop;return
+ end
+ if op=="Buy" and phase=="Merchant" then
+  local slot=p and p.index
+  if typeof(slot)~="number" or slot%1~=0 then return end
+  local item=ctx.shop[slot];if not item then return end
+  if r.gold<item.price then return note(ctx,"Not enough gold") end
+  r.gold-=item.price;Progress.AddItem(r,item.name,1);table.remove(ctx.shop,slot)
+  note(ctx,"Purchased "..item.name);return
+ end
+ if op=="Trap" and phase=="Class" and r.class=="Hunter" then
+  if table.find({"Spike","Venom","Snare"},p and p.name) then r.trap=p.name end;return
+ end
+ if op=="Bounty" and phase=="Class" and r.class=="Hunter" then
+  if Progress.PickBounty(r,p and p.kind) then note(ctx,"Bounty accepted") else note(ctx,"Complete your current bounty first") end;return
+ end
+ if op=="CryUnlock" and phase=="Class" then
+  if Progress.UnlockCry(r,p and p.index) then note(ctx,"Battle Cry node unlocked") end;return
+ end
+ if op=="CraftSpell" and phase=="Class" then
+  local ok,msg=Progress.CraftSpell(r,p and p.area,p and p.element,p and p.effect)
+  note(ctx,msg);return
+ end
+ if op=="BlessRequest" and phase=="Class" then
+  if Progress.AddBlessingRequest(r,p and p.name) then note(ctx,"Blessing requested! Win combats to activate it") else note(ctx,"Pending blessings full or invalid") end;return
+ end
+ if op=="Cleanse" and phase=="Class" and r.class=="Paladin" then
+  if (r.charges or 0)<1 then return note(ctx,"Gain Divine Charges by completing blessings") end
+  if Progress.RemoveCurse(r,p and p.name) then r.charges-=1;note(ctx,"Curse cleansed") end;return
+ end
+ if op=="ZombieEquip" and phase=="Class" and r.class=="Necromancer" then
+  local slot=p and p.slot;local name=p and p.name
+  if not table.find({"Head","Arms","Chest","Legs","Core"},slot) then return end
+  if not Content.Items[name] or Content.Items[name].kind~="Part" or (r.inventory[name] or 0)<1 then return end
+  local prev=r.zombieParts[slot]
+  if prev then Progress.AddItem(r,prev,1) end
+  r.zombieParts[slot]=name;r.inventory[name]-=1
+  if r.inventory[name]==0 then r.inventory[name]=nil end
+  note(ctx,"Zombie "..slot.." equipped")
+  return
+ end
+ note(ctx,"This action is not available here")
+end
+local function publicView(ctx)
+ -- No Instances or cyclic source references are ever sent to clients.
+ local data={phase=ctx.phase,info=ctx.info,message=ctx.message,run=ctx.run,map=ctx.map,reward=ctx.reward,shop=ctx.shop,eventName=ctx.eventName,stats=ctx.run and Progress.Stats(ctx.run) or nil}
+ if ctx.eventName then data.eventChoices=Adventure.EventChoices(ctx.eventName) end
+ return data
+end
+remote.OnServerInvoke=function(player,op,p)
+ if typeof(op)~="string" or #op>35 then return {phase="Menu",message="Bad request"} end
+ local now=os.clock()
+ if op~="Poll" and (now-(lastCall[player] or 0))<.06 then
+  return publicView(sessions[player] or {phase="Menu"})
+ end
+ if op~="Poll" then lastCall[player]=now end
+ local ctx=sessions[player]
+ if not ctx then ctx={phase="Menu",message="Welcome to Cool RPG"};sessions[player]=ctx end
+ ctx.message=""
+ local ok,err=pcall(handle,ctx,op,p)
+ if not ok then warn("[Cool RPG] Server action error for",player.UserId,op,err);ctx.message="Action failed on server; check Output" end
+ return publicView(ctx)
+end
+Players.PlayerRemoving:Connect(function(player) sessions[player]=nil;lastCall[player]=nil end)
+]]></ProtectedString>
+      </Properties>
+    </Item>
+  </Item>
+  <Item class="StarterPlayer" referent="RBX00000013">
+    <Properties>
+      <string name="Name">StarterPlayer</string>
+    </Properties>
+    <Item class="StarterPlayerScripts" referent="RBX00000014">
+      <Properties>
+        <string name="Name">StarterPlayerScripts</string>
+      </Properties>
+      <Item class="LocalScript" referent="RBX00000015">
+        <Properties>
+          <string name="Name">UI</string>
+          <ProtectedString name="Source"><![CDATA[--!strict
+-- Cool RPG 0.2: references the yolo game.pdf UI diagrams, no external assets.
+local Players=game:GetService("Players")
+local ReplicatedStorage=game:GetService("ReplicatedStorage")
+local remote=ReplicatedStorage:WaitForChild("RPGRequest")
+local Content=require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Content"))
+local Views=script.Parent:WaitForChild("Views")
+local T=require(Views:WaitForChild("Kit"))
+local Menus=require(Views:WaitForChild("Menus"))
+local Camp=require(Views:WaitForChild("Camp"))
+local Combat=require(Views:WaitForChild("Combat"))
+local Class=require(Views:WaitForChild("Class"))
+local gui=T.make("ScreenGui",Players.LocalPlayer:WaitForChild("PlayerGui"),{
+ Name="CoolRPG_OriginalStyle",ResetOnSpawn=false,IgnoreGuiInset=true,DisplayOrder=10})
+local canvas=T.rect(gui,0,0,1280,720,T.c.bg,0,false)
+canvas.AnchorPoint=Vector2.new(.5,.5)
+canvas.Position=UDim2.fromScale(.5,.5)
+local scale=T.make("UIScale",canvas,{Scale=1})
+local function resize()
+ local camera=workspace.CurrentCamera
+ if not camera then return end
+ scale.Scale=math.min(camera.ViewportSize.X/1280,camera.ViewportSize.Y/720)
+end
+resize()
+if workspace.CurrentCamera then workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(resize) end
+local main=T.rect(canvas,0,0,1280,720,T.c.bg,1,false)
+local current={phase="Menu"}
+local choice={race="Human",class="Warrior",trait="Balanced"}
+local draft={area=false,element="Fire",effect="None"}
+local localState={target=1,combatTab="Actions",selectedItem=nil,selectedRecipe=nil,selectedSkill=nil}
+local busy=false
+local render
+local function clear()
+ for _,obj in ipairs(main:GetChildren()) do obj:Destroy() end
+end
+local function send(op,data)
+ if busy then return end
+ busy=true
+ local previous=current.phase
+ local ok,result=pcall(function() return remote:InvokeServer(op,data or {}) end)
+ busy=false
+ if ok and typeof(result)=="table" then
+  current=result
+  if current.phase~=previous then
+   localState.combatTab="Actions"
+   if current.phase=="Combat" then localState.target=1 end
+  end
+ else current.message="Could not reach the server. See Roblox Studio Output." end
+ render()
+end
+render=function()
+ clear()
+ local phase=current.phase or "Menu"
+ if phase~="Menu" then
+  local top=T.rect(main,0,0,1280,59,T.c.panel,0,false)
+  T.rect(top,0,57,1280,2,T.c.border,.48,false)
+  local title=({Creation="CHARACTER CREATION",Camp="CAMPSITE",Map="ADVENTURE MAP",
+   Combat="COMBAT",Event="RANDOM EVENT",Reward="POST COMBAT",Inventory="INVENTORY",
+   Crafting="CRAFTING",Skills="SKILLS",Class="CLASS ABILITY",Merchant="MERCHANT",
+   Stats="CHARACTER INFO",Codex="CODEX",Info="INFORMATION",
+   Victory="VICTORY",Death="DEFEAT"})[phase] or phase:upper()
+  T.label(top,title,0,8,1280,42,{size=25,bold=true,align=Enum.TextXAlignment.Center})
+  if phase~="Creation" and phase~="Info" and phase~="Death" and phase~="Victory" then
+   T.button(top,"SETTINGS",1124,10,137,37,function() send("Info",{kind="Settings"}) end,T.c.mute)
+  end
+ end
+ local view={root=main,state=current,send=send,redraw=render,choice=choice,draft=draft,
+  localState=localState,content=Content}
+ if phase=="Menu" then Menus.Menu(view)
+ elseif phase=="Creation" then Menus.Creation(view)
+ elseif phase=="Camp" then Camp.Camp(view)
+ elseif phase=="Map" then Camp.Map(view)
+ elseif phase=="Combat" then Combat.Show(view)
+ elseif phase=="Event" then Menus.Event(view)
+ elseif phase=="Reward" then Menus.Reward(view)
+ elseif phase=="Inventory" then Camp.Inventory(view)
+ elseif phase=="Crafting" then Camp.Crafting(view)
+ elseif phase=="Skills" then Camp.Skills(view)
+ elseif phase=="Class" then Class.Show(view)
+ elseif phase=="Stats" then Camp.Stats(view)
+ elseif phase=="Codex" then Camp.Codex(view)
+ elseif phase=="Merchant" then Camp.Merchant(view)
+ elseif phase=="Info" then Menus.Info(view)
+ elseif phase=="Victory" or phase=="Death" then Menus.Finale(view)
+ end
+ local bottom=T.rect(main,0,690,1280,30,T.c.panel,.03,false)
+ T.label(bottom,(current.message and current.message~="" and current.message) or "COOL RPG   •   ORIGINAL GAME UI RECREATION   •   v0.3",22,0,1210,30,{size=12,color=T.c.mute,truncate=true})
+end
+local ok,result=pcall(function() return remote:InvokeServer("Poll") end)
+if ok and typeof(result)=="table" then current=result end
+render()
+]]></ProtectedString>
+        </Properties>
+      </Item>
+      <Item class="Folder" referent="RBX00000016">
+        <Properties>
+          <string name="Name">Views</string>
+        </Properties>
+        <Item class="ModuleScript" referent="RBX00000017">
+          <Properties>
+            <string name="Name">Camp</string>
+            <ProtectedString name="Source"><![CDATA[--!strict
+-- Recreation of original Camp.MainUI: fixed bottom navigation, inventory
+-- equipment slots/item details, recipe selection + craft, and skill details.
+local T=require(script.Parent.Kit)
+local C={};local k=T.c
+
+local function dock(v,selected)
+ local labels={{"ADVENTURE","Map"},{"INVENTORY","Inventory"},
+  {"CRAFTING","Crafting"},{"SKILLS","Skills"},
+  {"CLASS ABILITY","Class"},{"CHARACTER","Stats"}}
+ local bar=T.rect(v.root,0,610,1280,79,k.panel,0,false)
+ for i,tab in ipairs(labels) do
+  local tabX=16+(i-1)*210
+  T.button(bar,tab[1],tabX,12,194,52,function()
+   v.send("CampTab",{tab=tab[2]})
+  end,selected==tab[2] and k.green or k.mute,selected==tab[2])
+ end
+end
+
+local function left(v,title)
+ local panel=T.panel(v.root,20,77,930,514,title,k.gold)
+ T.sheet(v.root,v.state.run,v.state.stats,971,78,289,513)
+ dock(v,v.state.phase=="Camp" and "" or v.state.phase)
+ return panel
+end
+
+function C.Camp(v)
+ local panel=left(v,"WELCOME BACK")
+ T.label(panel,"THE CAMPSITE",28,85,868,51,{size=30,bold=true,color=k.white})
+ T.label(panel,"Prepare for your next encounter. Inspect equipment, gather supplies, craft recipes and improve your class ability.",
+  30,151,839,97,{size=18,color=k.mute})
+ T.label(panel,"Select a menu along the bottom of the screen.",29,276,858,31,{size=17,color=k.green})
+ T.button(panel,"ADVENTURE MAP",28,357,277,54,function()
+  v.send("CampTab",{tab="Map"}) end,k.green)
+ if v.state.run.class=="Merchant" then
+  T.button(panel,"MERCHANT'S CARAVAN",321,357,304,54,function()
+   v.send("CampTab",{tab="Merchant"}) end,k.gold)
+ end
+end
+
+local function slot(parent,label,value,x,y,w)
+ local p=T.rect(parent,x,y,w,65,k.raised,0,4);T.stroke(p)
+ T.label(p,label:upper(),10,3,w-20,21,{size=12,bold=true,color=k.mute})
+ T.label(p,value or "Empty",10,26,w-20,33,{size=13,color=k.white,truncate=true})
+end
+
+function C.Inventory(v)
+ local run=v.state.run;local root=left(v,"INVENTORY")
+ local equipment=T.panel(root,12,57,214,437,"EQUIPMENT",k.blue)
+ local list={"Weapon","Shield","Armor","Ring"}
+ for i,kind in ipairs(list) do
+  slot(equipment,kind,run.equipment[kind],12,62+(i-1)*91,188)
+ end
+ local grid=T.panel(root,238,57,344,437,"ITEMS",k.gold)
+ local scroll=T.scroll(grid,10,57,324,363)
+ local selected=v.localState.selectedItem
+ local valid=selected and run.inventory[selected] and run.inventory[selected]>0
+ if not valid then selected=nil end
+ local info=T.panel(root,594,57,324,437,"ITEM DETAILS",k.blue)
+ local function show(name)
+  v.localState.selectedItem=name
+  v.redraw()
+ end
+ for _,name in ipairs(T.keys(run.inventory)) do
+  local item=v.content.Items[name]
+  if item then
+   T.entry(scroll,name.."  ×"..run.inventory[name],item.kind, function() show(name) end,
+    k.blue,63,selected==name)
+  end
+ end
+ if selected then
+  local item=v.content.Items[selected]
+  T.label(info,selected,13,64,295,50,{size=20,bold=true})
+  T.label(info,"TYPE: "..(item.kind or "Item"),14,123,285,29,{size=14,color=k.mute})
+  T.label(info,(item.stat and ("+"..item.bonus.." "..item.stat) or "No stat modifiers"),
+   13,169,289,71,{size=15,color=k.white})
+  T.label(info,"Quantity: "..run.inventory[selected],14,258,273,28,{size=14,color=k.mute})
+  if item.kind=="Consumable" then
+   T.button(info,"USE ITEM",14,344,292,49,function() v.send("UseItem",{name=selected}) end,k.green)
+  elseif table.find(list,item.kind) then
+   T.button(info,"EQUIP",14,344,292,49,function() v.send("Equip",{name=selected}) end,k.green)
+  end
+ else
+  T.label(info,"Select an item to see its stats and available actions.",
+   16,84,282,128,{size=17,color=k.mute})
+ end
+end
+
+function C.Crafting(v)
+ local run=v.state.run;local root=left(v,"CRAFTING")
+ local recipes=T.panel(root,12,57,425,437,"AVAILABLE RECIPES",k.blue)
+ local scroll=T.scroll(recipes,10,57,405,361)
+ local selected=v.localState.selectedRecipe
+ local found=0
+ for _,recipe in ipairs(v.content.Recipes) do
+  local unlocked=false
+  for ingredient in pairs(recipe.need) do
+   if (run.inventory[ingredient] or 0)>0 then unlocked=true end
+  end
+  if unlocked then
+   found+=1
+   T.entry(scroll,recipe.name,"Select recipe to inspect requirements",function()
+    v.localState.selectedRecipe=recipe.name;v.redraw()
+   end,k.gold,60,selected==recipe.name)
+  end
+ end
+ if found==0 then T.copy(scroll,"No recipes discovered yet. Gather materials on adventures.",74,k.mute) end
+ local detail=T.panel(root,452,57,464,437,"RECIPE DETAILS",k.gold)
+ local recipeData=nil
+ for _,recipe in ipairs(v.content.Recipes) do if recipe.name==selected then recipeData=recipe end end
+ if recipeData then
+  T.label(detail,recipeData.name,16,68,429,36,{size=21,bold=true})
+  T.label(detail,"MATERIALS REQUIRED",16,126,420,31,{size=15,bold=true,color=k.gold})
+  local canCraft=true;local i=0
+  for name,amount in pairs(recipeData.need) do
+   i+=1
+   local have=run.inventory[name] or 0
+   if have<amount then canCraft=false end
+   T.label(detail,name.."     "..have.." / "..amount,17,164+(i-1)*35,414,30,
+    {size=15,color=have>=amount and k.green or k.red})
+  end
+  T.button(detail,"CRAFT",142,352,180,52,function()
+   if canCraft then v.send("Craft",{name=recipeData.name}) end
+  end,canCraft and k.green or k.mute)
+ else
+  T.label(detail,"Select a recipe to see its ingredients and result.",
+   27,116,406,131,{size=20,color=k.mute})
+ end
+end
+
+function C.Skills(v)
+ local r=v.state.run;local panel=left(v,"SKILLS")
+ local leftList=T.panel(panel,12,57,427,437,"SKILL LIST",k.purple)
+ local scroll=T.scroll(leftList,10,57,407,361)
+ local skillNames={"Guard"}
+ for _,skill in ipairs(v.content.BaseSkills[r.class]) do table.insert(skillNames,skill) end
+ for _,name in ipairs(skillNames) do
+  T.entry(scroll,name,"Click to view description",function()
+   v.localState.selectedSkill=name;v.redraw()
+  end,k.purple,64,v.localState.selectedSkill==name)
+ end
+ local d=T.panel(panel,451,57,465,437,"SKILL DETAILS",k.gold)
+ local name=v.localState.selectedSkill
+ if name then
+  T.label(d,name,20,77,423,39,{size=24,bold=true})
+  local desc=name=="Guard" and "Universal skill. Reduce incoming damage and gain Barrier. This replaces the old separate Defend action."
+   or name=="Crafted Spell" and ("Custom Mage spell: "..r.spell.name)
+   or "This class skill appears in your combat menu, provided its cooldown and resource requirements are met."
+  T.label(d,desc,20,145,422,154,{size=18,color=k.mute})
+ else
+  T.label(d,"Select a skill on the left to view its description.",
+   21,112,419,130,{size=19,color=k.mute})
+ end
+end
+
+function C.Stats(v)
+ local r=v.state.run;local panel=left(v,"CHARACTER INFO");local sc=T.scroll(panel,18,57,891,421)
+ T.copy(sc,r.race.."  /  "..r.class.."  /  "..r.trait,44,k.gold)
+ for _,name in ipairs(v.content.Stats) do
+  T.copy(sc,name.."     "..tostring(v.state.stats[name] or 0),31,k.white)
+ end
+ T.copy(sc,"ACTIVE BLESSINGS",38,k.green)
+ for _,name in ipairs(T.keys(r.blessings)) do T.copy(sc,name.." ×"..r.blessings[name],31,k.white) end
+ T.copy(sc,"ACTIVE CURSES",38,k.red)
+ for _,name in ipairs(T.keys(r.curses)) do T.copy(sc,name.." ×"..r.curses[name],31,k.white) end
+ T.button(panel,"OPEN CODEX",662,12,242,36,function() v.send("CampTab",{tab="Codex"}) end,k.blue)
+end
+
+function C.Codex(v)
+ local r=v.state.run;local panel=left(v,"CODEX");local sc=T.scroll(panel,18,57,891,421)
+ T.copy(sc,"Discoveries, items and enemies encountered during this run.",49,k.mute)
+ T.copy(sc,"Combats won: "..r.wins,34,k.white)
+ T.copy(sc,"Enemies defeated: "..r.kills,34,k.white)
+ if r.class=="Hunter" then
+  T.copy(sc,"TROPHY DISPLAY  •  "..r.trophyTotal.." trophies",40,k.green)
+  for _,name in ipairs(T.keys(r.trophies)) do T.copy(sc,name.."  ×"..r.trophies[name],32,k.white) end
+ end
+ T.button(panel,"← CHARACTER",662,12,242,36,function()
+  v.send("CampTab",{tab="Stats"}) end,k.mute)
+end
+
+function C.Merchant(v)
+ local r=v.state.run;local root=left(v,"MERCHANT'S CARAVAN")
+ local stock=T.panel(root,12,57,904,437,"STOCK",k.gold)
+ local sc=T.scroll(stock,13,62,876,348)
+ T.copy(sc,"Gold: "..r.gold.."    Mana: "..r.mp,39,k.gold)
+ for i,item in ipairs(v.state.shop or {}) do
+  local record=v.content.Items[item.name]
+  T.entry(sc,item.name.."    "..item.price.." GOLD",record and record.kind or "Item",function()
+   v.send("Buy",{index=i})
+  end,k.blue,63)
+ end
+ if r.class=="Merchant" then T.entry(sc,"REFRESH SHOP","20 MP",function() v.send("RefreshShop") end,k.green,63) end
+ T.button(root,"RETURN TO CAMP",661,13,243,35,function() v.send("BackCamp") end,k.mute)
+end
+local shades={Combat=k.red,Event=k.mute,Merchant=k.blue,Rest=k.green,Special=k.purple,Boss=k.blue}
+local function linkLine(parent,ax,ay,bx,by,color)
+ local dx=bx-ax;local dy=by-ay
+ local f=T.rect(parent,(ax+bx)/2,(ay+by)/2,math.sqrt(dx*dx+dy*dy),2,color,.4,false)
+ f.AnchorPoint=Vector2.new(.5,.5)
+ f.Rotation=math.deg(math.atan2(dy,dx))
+end
+function C.Map(v)
+ local map=v.state.map;local p=v.root
+ T.subtitle(p,"ADVENTURE MAP",36,80,600)
+ T.label(p,"Select an available connected node. Completing it returns you to camp.",38,111,1050,26,{size=14,color=k.mute})
+ local board=T.panel(p,33,150,1215,470,nil)
+ T.label(board,"PATH LEGEND",23,22,240,27,{size=16,bold=true,color=k.gold})
+ for i,l in ipairs({{"ENEMIES",k.red},{"BOSS",k.blue},{"EVENTS",k.mute},{"MERCHANT",k.blue},{"REST",k.green},{"SPECIAL",k.purple}}) do
+  T.rect(board,26,62+(i-1)*41,14,14,l[2],0,3)
+  T.label(board,l[1],53,52+(i-1)*41,190,34,{size=14})
+ end
+ T.label(board,"CURRENT ROW  "..map.row.." / 10",28,358,210,29,{size=15,bold=true,color=k.gold})
+ local tx={418,639,860}
+ local function nodeX(col) return tx[col] or 639 end
+ local function nodeY(row) return 420-(row-1)*43 end
+ for row=1,9 do
+  for _,node in ipairs(map.rows[row]) do
+   for _,to in ipairs(node.links) do
+    linkLine(board,nodeX(node.col),nodeY(row),nodeX(to),nodeY(row+1),k.border)
+   end
+  end
+ end
+ local visited={}
+ for _,h in ipairs(map.history or {}) do visited[h.row.."-"..h.col]=true end
+ for row=1,10 do
+  for _,node in ipairs(map.rows[row]) do
+   local can=row==map.row and table.find(map.available,node.col)~=nil
+   local done=visited[row.."-"..node.col]
+   local current=row==map.row
+   local on=can or done
+   local col=on and (shades[node.kind] or k.mute) or k.border
+   local text=(done and "✓ " or can and "◆ " or "◇ ")..node.kind
+   T.button(board,text,nodeX(node.col)-66,nodeY(row)-14,132,30,function()
+    if can then v.send("ChooseNode",{index=node.col}) end
+   end,col,current and can)
+  end
+ end
+ T.button(p,"← RETURN TO CAMP",33,635,205,37,function() v.send("BackCamp") end,k.mute)
+end
+C.Left=left
+return C
+]]></ProtectedString>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="RBX00000018">
+          <Properties>
+            <string name="Name">Class</string>
+            <ProtectedString name="Source"><![CDATA[--!strict
+-- The special class screens retain their server-side ability logic.
+local T=require(script.Parent.Kit)
+local Camp=require(script.Parent.Camp)
+local C={};local k=T.c
+local function row(scroll,name,desc,func,color)
+ T.entry(scroll,name,desc,func,color or k.purple,67)
+end
+function C.Show(v)
+ local r=v.state.run
+ local panel=Camp.Left(v,r.class:upper().."  •  CLASS ABILITY")
+ local sc=T.scroll(panel,21,60,861,380)
+ T.copy(sc,v.content.Classes[r.class],65,k.mute)
+ if r.class=="Warrior" then
+  T.copy(sc,"BATTLE CRY  •  "..r.cryPoints.." skill points available",45,k.gold)
+  T.copy(sc,"Your skill tree is randomly generated on every new run. Unlock each branch from its first tier upward.",60,k.mute)
+  for tier=1,3 do
+   T.copy(sc,"TIER  "..tier,30,k.gold)
+   for branch=1,3 do
+    local i=(tier-1)*3+branch;local node=r.cryNodes[i]
+    local owned=r.cryOwned[tostring(i)]
+    local valid=not owned and r.cryPoints>0 and (tier==1 or r.cryOwned[tostring(i-3)])
+    local label=owned and "UNLOCKED  ✓  " or valid and "UNLOCK  •  " or "LOCKED  •  "
+    row(sc,label..node.name,node.desc,function() if valid then v.send("CryUnlock",{index=i}) end end,owned and k.green or valid and k.gold or k.border)
+   end
+  end
+ elseif r.class=="Hunter" then
+  T.copy(sc,"TROPHY DISPLAY  •  "..r.trophyTotal.." trophies",42,k.gold)
+  T.copy(sc,"Every killed monster becomes a trophy. Gain +0.3% damage per trophy, capped at +25%.",54,k.mute)
+  for _,name in ipairs(T.keys(r.trophies)) do T.copy(sc,name.."   ×"..r.trophies[name],30,k.green) end
+  T.copy(sc,"TRAP MAKER  •  PRECOMBAT PREPARATION",43,k.gold)
+  for _,name in ipairs({"Spike","Venom","Snare"}) do
+   local desc={Spike="Deals damage to the strongest enemy",Venom="Poisons the strongest enemy",Snare="Stuns the strongest enemy"}
+   row(sc,(r.trap==name and "SELECTED  •  " or "SET TRAP  •  ")..name,desc[name],function() v.send("Trap",{name=name}) end,r.trap==name and k.green or k.blue)
+  end
+  T.copy(sc,"BOUNTY BOARD",43,k.gold)
+  if r.bounty then
+   T.copy(sc,r.bounty.kind..":  "..r.bounty.progress.." / "..r.bounty.goal.." targets eliminated",55,k.green)
+  else
+   for _,kind in ipairs({"Any","Wild","Goblin","Undead"}) do
+    row(sc,"ACCEPT  "..kind:upper().." BOUNTY","Defeat marked monsters for gold and XP",function() v.send("Bounty",{kind=kind}) end,k.gold)
+   end
+  end
+ elseif r.class=="Paladin" then
+  T.copy(sc,"DIVINE FAVOR  •  "..(r.charges or 0).." divine charges",42,k.gold)
+  T.copy(sc,"Paladins have NO active blessing limit and may stack identical blessings. Pending blessings activate after victories; Divine Charges cleanse curses.",75,k.mute)
+  T.copy(sc,"ACTIVE BLESSINGS",34,k.gold)
+  for _,n in ipairs(T.keys(r.blessings)) do T.copy(sc,n.."  ×"..r.blessings[n],30,k.green) end
+  T.copy(sc,"PENDING BLESSINGS  •  MAX 2",34,k.gold)
+  for _,b in ipairs(r.pending or {}) do T.copy(sc,b.name.."  •  "..b.left.." victories left",30,k.mute) end
+  T.copy(sc,"REQUEST BLESSING",38,k.gold)
+  for _,n in ipairs(T.keys(v.content.Blessings)) do
+   row(sc,n,v.content.Blessings[n].text,function() v.send("BlessRequest",{name=n}) end,k.gold)
+  end
+  T.copy(sc,"CLEANSE A CURSE  •  1 DIVINE CHARGE",40,k.red)
+  for _,n in ipairs(T.keys(r.curses)) do row(sc,"REMOVE  "..n,"Use a Divine Charge to remove one curse stack",function() v.send("Cleanse",{name=n}) end,k.red) end
+ elseif r.class=="Mage" then
+  local d=v.draft;local cost=4+(d.area and 4 or 0)+(d.effect~="None" and 2 or 0)
+  T.copy(sc,"CUSTOM SPELL CRAFTER  •  10-POINT LIMIT",47,k.gold)
+  T.copy(sc,d.element.."  /  "..(d.area and "ALL ENEMIES" or "SINGLE ENEMY").."  /  "..d.effect.."    •    "..cost.." / 10 POINTS",62,cost>10 and k.red or k.green)
+  T.copy(sc,"ELEMENT",30,k.gold)
+  for _,el in ipairs({"Fire","Ice","Arcane"}) do
+   row(sc,(d.element==el and "● " or "○ ")..el,"Elemental damage focus",function() d.element=el;v.redraw() end,k.purple)
+  end
+  T.copy(sc,"TARGET TYPE",30,k.gold)
+  for _,opt in ipairs({{false,"One enemy"},{true,"All enemies (+4 points)"}}) do
+   row(sc,(d.area==opt[1] and "● " or "○ ")..opt[2],"Choose how many foes are hit",function() d.area=opt[1];v.redraw() end,k.blue)
+  end
+  T.copy(sc,"ADDITIONAL EFFECT",30,k.gold)
+  for _,name in ipairs({"None","Poison","Burn"}) do
+   row(sc,(d.effect==name and "● " or "○ ")..name,"Additional status effect",function() d.effect=name;v.redraw() end,k.purple)
+  end
+  row(sc,"CRAFT SPELL","Apply your custom spell to combat",function() v.send("CraftSpell",d) end,k.gold)
+ elseif r.class=="Necromancer" then
+  T.copy(sc,"ZOMBIE WORKSHOP",43,k.gold)
+  T.copy(sc,"Equip monster parts in five body slots to build your own undead companion. Your zombie attacks automatically.",64,k.mute)
+  for _,slot in ipairs({"Head","Arms","Chest","Legs","Core"}) do
+   T.copy(sc,slot:upper().."  •  "..(r.zombieParts[slot] or "Empty"),38,k.gold)
+   for _,name in ipairs(T.keys(r.inventory)) do
+    local itm=v.content.Items[name]
+    if itm and itm.kind=="Part" then
+     row(sc,"EQUIP  "..name.."  ×"..r.inventory[name],"+"..itm.bonus.." "..itm.stat,function() v.send("ZombieEquip",{slot=slot,name=name}) end,k.purple)
+    end
+   end
+  end
+ elseif r.class=="Merchant" then
+  T.copy(sc,"MERCHANT'S CARAVAN",44,k.gold)
+  T.copy(sc,"Buy equipment and supplies from your personal campsite shop. Refresh the entire stock for 20 MP.",81,k.mute)
+  row(sc,"OPEN PERSONAL SHOP","Browse items, purchase equipment, and manage your supplies",function() v.send("OpenShop") end,k.gold)
+ end
+end
+return C
+]]></ProtectedString>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="RBX00000019">
+          <Properties>
+            <string name="Name">Combat</string>
+            <ProtectedString name="Source"><![CDATA[--!strict
+-- Original gamerpGggg Combat layout: party cards left, enemy cards right,
+-- central battle stage, horizontal turn-order strip, log and actions at bottom.
+-- Updated design: Guard lives under Skills; items/skills replace action buttons.
+local T=require(script.Parent.Kit)
+local M={};local c=T.c
+
+local function card(parent,name,level,hp,maxHP,x,y,w,mainColor)
+ local f=T.rect(parent,x,y,w,84,c.raised,0,5)
+ T.stroke(f,c.border,1)
+ T.label(f,name,12,5,w-75,23,{size=14,bold=true})
+ T.label(f,"Lv "..level, w-68,5,60,23,{size=12,color=c.mute,align=Enum.TextXAlignment.Right})
+ T.label(f,hp.." / "..maxHP,12,28,w-24,22,{size=12,color=mainColor})
+ T.progress(f,10,58,w-20,12,hp,maxHP,mainColor)
+ return f
+end
+
+function M.Show(v)
+ local r=v.state.run
+ local b=r.combat
+ if not b then return end
+ local p=v.root;local localView=v.localState
+ local stats=v.state.stats or {}
+ local maxHP=stats.MaxHP or r.hp
+ local maxMP=stats.MaxMP or r.mp
+ local function act(action,skill)
+  localView.combatTab="Actions"
+  v.send("CombatAction",{action=action,index=localView.target or 1,skill=skill})
+ end
+
+ local headline=T.rect(p,0,58,1280,44,c.panel,.02,false)
+ T.label(headline,"STAGE "..(r.stage or 1),18,0,160,43,{size=15,bold=true,color=c.gold})
+ T.label(headline,"ROUND "..(b.round or 1),202,0,150,43,{size=15,color=c.mute})
+ T.label(headline,"YOUR TURN",1090,0,161,43,{size=14,bold=true,color=c.green,align=Enum.TextXAlignment.Right})
+
+ local party=T.panel(p,13,111,248,316,"PARTY",c.blue)
+ card(party,r.race.." "..r.class,r.level,r.hp,maxHP,10,58,227,c.green)
+ T.label(party,"MP "..r.mp.." / "..maxMP,22,151,195,27,{size=13,color=c.blue})
+ T.progress(party,21,182,203,9,r.mp,maxMP,c.blue)
+ T.label(party,"BARRIER "..(b.barrier or 0),21,204,199,25,{size=12,color=c.gold})
+ if b.zombie then
+  T.label(party,"SUMMON  •  UNDEAD",17,248,208,28,{size=13,bold=true,color=c.purple})
+  T.label(party,"Attack "..(b.zombie.attack or 0),20,274,197,23,{size=13,color=c.mute})
+ end
+
+ local field=T.panel(p,275,111,686,316,"BATTLEFIELD",c.gold)
+ local queue=T.rect(field,15,56,655,53,c.raised,0,4)
+ T.label(queue,"TURN ORDER",10,5,120,41,{size=13,bold=true,color=c.mute})
+ T.button(queue,"YOU",135,7,104,39,nil,c.green,true)
+ local queuePos=245
+ for i,e in ipairs(b.enemies) do
+  if e.hp>0 and queuePos<591 then
+   T.button(queue,string.format("%d %s",i,e.name),queuePos,7,109,39,function()
+    localView.target=i;v.redraw()
+   end,c.red,localView.target==i)
+   queuePos+=115
+  end
+ end
+ local selectedEnemy=b.enemies[localView.target] or b.enemies[1]
+ if selectedEnemy and selectedEnemy.hp<=0 then
+  for i,e in ipairs(b.enemies) do
+   if e.hp>0 then localView.target=i;selectedEnemy=e;break end
+  end
+ end
+ if selectedEnemy then
+  T.label(field,selectedEnemy.name,22,147,632,50,
+   {size=29,bold=true,align=Enum.TextXAlignment.Center})
+  T.label(field,"Enemy level "..selectedEnemy.level.."  •  Armor "..selectedEnemy.defense,
+   34,194,617,29,{size=15,color=c.mute,align=Enum.TextXAlignment.Center})
+  local fx={}
+  for name,duration in pairs(selectedEnemy.status or {}) do
+   if duration>0 then table.insert(fx,name.." ×"..duration) end
+  end
+  T.label(field,table.concat(fx,"    "),30,235,626,30,
+   {size=13,color=c.purple,align=Enum.TextXAlignment.Center})
+ end
+ T.label(field,"Click an enemy on the right to select a target.",25,271,635,25,
+  {size=12,color=c.mute,align=Enum.TextXAlignment.Center})
+
+ local enemies=T.panel(p,974,111,293,316,"ENEMIES",c.red)
+ local enemyScroll=T.scroll(enemies,8,54,277,250)
+ for i,e in ipairs(b.enemies) do
+  if e.hp>0 then
+   local label=e.name.."  •  LV "..e.level
+   T.entry(enemyScroll,label,e.hp.." / "..e.maxHP.." HP",function()
+    localView.target=i;v.redraw()
+   end,c.red,71,localView.target==i)
+  end
+ end
+
+ local log=T.panel(p,13,440,396,242,"COMBAT LOG",c.blue)
+ T.label(log,"Scroll to review earlier actions",16,48,365,21,{size=12,color=c.mute})
+ local sc=T.scroll(log,11,76,373,156)
+ for _,msg in ipairs(b.log or {}) do
+  T.copy(sc,"• "..msg,math.max(41,math.ceil(#msg/33)*20),c.white)
+ end
+
+ local commands=T.panel(p,421,440,846,242,"ACTIONS",c.green)
+ local tab=localView.combatTab or "Actions"
+ if tab=="Actions" then
+  local actions={
+   {"ATTACK",c.red,function() act("Attack") end},
+   {"SKILLS",c.purple,function() localView.combatTab="Skills";v.redraw() end},
+   {"ITEMS",c.blue,function() localView.combatTab="Items";v.redraw() end},
+   {"ESCAPE",c.mute,function() act("Escape") end},
+  }
+  for i,a in ipairs(actions) do
+   local col=(i-1)%2;local row=math.floor((i-1)/2)
+   T.button(commands,a[1],14+col*415,61+row*84,399,73,a[3],a[2])
+  end
+ else
+  T.button(commands,"BACK",672,9,160,39,function()
+   localView.combatTab="Actions";v.redraw()
+  end,c.mute)
+  T.label(commands,tab:upper().."  •  SELECT AN ACTION",15,53,800,25,
+   {size=14,color=c.mute})
+  local choices=T.scroll(commands,14,85,818,147)
+  if tab=="Skills" then
+   T.entry(choices,"Guard","Universal skill  •  Damage reduction + Barrier",function()
+    act("Skill","Guard") end,c.green,60)
+   for _,name in ipairs(v.content.BaseSkills[r.class]) do
+    local cd=b.cooldowns[name] or 0
+    local info=cd>0 and ("Cooldown: "..cd.." turns") or "Use on selected target"
+    if name=="Crafted Spell" then info=r.spell.name.."  •  "..info end
+    T.entry(choices,name,info,function()
+     if cd==0 then act("Skill",name) end
+    end,cd>0 and c.border or c.purple,60)
+   end
+  else
+   local count=0
+   for _,name in ipairs(T.keys(r.inventory)) do
+    local item=v.content.Items[name]
+    if item and item.kind=="Consumable" and r.inventory[name]>0 then
+     count+=1
+     T.entry(choices,name.."  ×"..r.inventory[name],"Use this item",function()
+      act("Item",name)
+     end,c.blue,60)
+    end
+   end
+   if count==0 then T.copy(choices,"No usable items in your inventory.",56,c.mute) end
+  end
+ end
+end
+return M
+]]></ProtectedString>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="RBX00000020">
+          <Properties>
+            <string name="Name">Kit</string>
+            <ProtectedString name="Source"><![CDATA[--!strict
+-- Reusable, client-only dark-fantasy GUI primitives. Base canvas: 1280 x 720.
+local T = {}
+-- Original gamerpGggg.rbxl palette: main #14141E, camp #161616,
+-- UI panels #1E1E1E, muted buttons #2D2D2D and green primary #329632.
+T.c = {
+ bg=Color3.fromRGB(20,20,30), panel=Color3.fromRGB(30,30,35),
+ raised=Color3.fromRGB(45,45,53), soft=Color3.fromRGB(58,57,68),
+ border=Color3.fromRGB(75,73,87), white=Color3.fromRGB(239,238,244),
+ mute=Color3.fromRGB(164,162,180), gold=Color3.fromRGB(213,187,108),
+ green=Color3.fromRGB(73,167,94), red=Color3.fromRGB(187,76,81),
+ blue=Color3.fromRGB(86,124,192), purple=Color3.fromRGB(130,105,172),
+}
+
+function T.make(class, parent, props)
+ local o=Instance.new(class)
+ for k,v in pairs(props or {}) do o[k]=v end
+ o.Parent=parent
+ return o
+end
+function T.rect(parent,x,y,w,h,color,alpha,radius)
+ local f=T.make("Frame",parent,{Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),BackgroundColor3=color or T.c.panel,BackgroundTransparency=alpha or 0,BorderSizePixel=0})
+ if radius ~= false then T.make("UICorner",f,{CornerRadius=UDim.new(0,radius or 10)}) end
+ return f
+end
+function T.stroke(parent,color,thickness)
+ return T.make("UIStroke",parent,{ApplyStrokeMode=Enum.ApplyStrokeMode.Border,Color=color or T.c.border,Transparency=.45,Thickness=thickness or 1})
+end
+function T.panel(parent,x,y,w,h,title,accent)
+ local p=T.rect(parent,x,y,w,h,T.c.panel,.01,6)
+ T.stroke(p)
+ if title then
+  T.label(p,title,17,11,w-34,31,{size=18,bold=true,color=accent or T.c.gold})
+  T.rect(p,17,48,w-34,1,T.c.border,.35,false)
+ end
+ return p
+end
+function T.label(parent,text,x,y,w,h,opt)
+ opt=opt or {}
+ return T.make("TextLabel",parent,{
+  Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),
+  BackgroundTransparency=1,Text=tostring(text),Font=opt.bold and Enum.Font.GothamBold or Enum.Font.Gotham,
+  TextSize=opt.size or 15,TextColor3=opt.color or T.c.white,
+  TextWrapped=opt.wrap ~= false,TextXAlignment=opt.align or Enum.TextXAlignment.Left,
+  TextYAlignment=opt.valign or Enum.TextYAlignment.Center,
+  TextTruncate=opt.truncate and Enum.TextTruncate.AtEnd or Enum.TextTruncate.None,
+ })
+end
+function T.button(parent,text,x,y,w,h,callback,accent,selected)
+ local color=selected and Color3.fromRGB(63,70,69) or T.c.raised
+ local b=T.make("TextButton",parent,{Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),
+  BackgroundColor3=color,BorderSizePixel=0,AutoButtonColor=true,Text=tostring(text),
+  Font=Enum.Font.GothamSemibold,TextSize=15,TextColor3=T.c.white,TextWrapped=true})
+ T.make("UICorner",b,{CornerRadius=UDim.new(0,5)})
+ T.stroke(b,selected and (accent or T.c.gold) or T.c.border,selected and 2 or 1)
+ -- Flat button treatment matching the original UI; no ornamental side stripe.
+ if selected then T.rect(b,0,h-3,w,3,accent or T.c.green,0,false) end
+ if callback then b.Activated:Connect(callback) end
+ return b
+end
+function T.scroll(parent,x,y,w,h)
+ local sf=T.make("ScrollingFrame",parent,{Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),
+  BackgroundTransparency=1,BorderSizePixel=0,CanvasSize=UDim2.fromOffset(0,0),
+  AutomaticCanvasSize=Enum.AutomaticSize.Y,ScrollingDirection=Enum.ScrollingDirection.Y,
+  ScrollBarThickness=5,ScrollBarImageColor3=T.c.gold,ClipsDescendants=true})
+ T.make("UIListLayout",sf,{SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,7)})
+ T.make("UIPadding",sf,{PaddingBottom=UDim.new(0,9),PaddingRight=UDim.new(0,8)})
+ return sf
+end
+function T.entry(scroll,title,detail,callback,accent,height,selected)
+ height=height or (detail and 68 or 46)
+ local b=T.make("TextButton",scroll,{Size=UDim2.new(1,-3,0,height),BackgroundColor3=selected and T.c.soft or T.c.raised,
+  BorderSizePixel=0,Text="",AutoButtonColor=callback~=nil})
+ T.make("UICorner",b,{CornerRadius=UDim.new(0,5)})
+ T.stroke(b,selected and (accent or T.c.gold) or T.c.border,selected and 2 or 1)
+ if selected then T.rect(b,0,height-3,4,3,accent or T.c.green,0,false) end
+ T.label(b,title,14,4,1000,detail and 28 or height-8,{size=15,bold=true,truncate=true})
+ -- The label must fit the list's current width rather than overflow.
+ local titleLabel=b:FindFirstChildOfClass("TextLabel")
+ if titleLabel then titleLabel.Size=UDim2.new(1,-27,0,detail and 29 or height-8) end
+ if detail then T.label(b,detail,14,33,1,25,{size=12,color=T.c.mute,truncate=true}).Size=UDim2.new(1,-27,0,25) end
+ if callback then b.Activated:Connect(callback) end
+ return b
+end
+function T.copy(parent,text,height,color)
+ local label=T.make("TextLabel",parent,{Size=UDim2.new(1,-12,0,height or 34),BackgroundTransparency=1,
+  Text=tostring(text),TextSize=14,Font=Enum.Font.Gotham,TextColor3=color or T.c.mute,
+  TextWrapped=true,TextXAlignment=Enum.TextXAlignment.Left,TextYAlignment=Enum.TextYAlignment.Center})
+ return label
+end
+function T.progress(parent,x,y,w,h,now,max,color)
+ T.rect(parent,x,y,w,h,T.c.soft,0,4)
+ local fraction=math.clamp((now or 0)/math.max(1,max or 1),0,1)
+ if fraction>0 then T.rect(parent,x,y,math.max(2,w*fraction),h,color or T.c.green,0,4) end
+end
+function T.keys(dict)
+ local out={}
+ for k in pairs(dict or {}) do table.insert(out,k) end
+ table.sort(out)
+ return out
+end
+function T.subtitle(parent,text,x,y,w)
+ T.label(parent,text,x,y,w or 950,26,{size=17,bold=true,color=T.c.gold})
+end
+function T.sheet(parent,run,stats,x,y,w,h)
+ local p=T.panel(parent,x,y,w,h,"CHARACTER INFO",T.c.gold)
+ if not run then return p end
+ T.label(p,run.race.."  /  "..run.class,16,53,w-32,28,{size=15,bold=true})
+ T.label(p,"LV "..run.level.."    XP "..run.xp.."/"..(run.level*35),16,84,w-32,22,{size=13,color=T.c.mute})
+ T.label(p,"HP  "..run.hp.." / "..stats.MaxHP,16,111,w-32,22,{size=13,color=T.c.green})
+ T.progress(p,16,137,w-32,9,run.hp,stats.MaxHP,T.c.green)
+ T.label(p,"MP  "..run.mp.." / "..stats.MaxMP,16,153,w-32,21,{size=13,color=T.c.blue})
+ T.progress(p,16,178,w-32,8,run.mp,stats.MaxMP,T.c.blue)
+ T.label(p,"GOLD  "..run.gold,16,195,w-32,26,{size=14,bold=true,color=T.c.gold})
+ T.rect(p,16,228,w-32,1,T.c.border,.25,false)
+ T.label(p,"MAIN STATS",16,234,w-32,29,{size=14,bold=true,color=T.c.gold})
+ for i,key in ipairs({"Strength","Defense","Speed","Intelligence","Luck","Charisma","Holiness"}) do
+  T.label(p,key,17,263+(i-1)*26,w-80,25,{size=13,color=T.c.mute})
+  T.label(p,tostring(stats[key] or 0),w-67,263+(i-1)*26,47,25,{size=14,bold=true,align=Enum.TextXAlignment.Right})
+ end
+ T.rect(p,16,457,w-32,1,T.c.border,.25,false)
+ T.label(p,"MORE INFO",16,462,w-32,29,{size=14,bold=true,color=T.c.gold})
+ T.label(p,"Kills: "..run.kills.."   Wins: "..run.wins.."   Bosses: "..run.bosses,16,492,w-30,24,{size=12,color=T.c.mute})
+ return p
+end
+return T
+]]></ProtectedString>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="RBX00000021">
+          <Properties>
+            <string name="Name">Menus</string>
+            <ProtectedString name="Source"><![CDATA[--!strict
+-- Original Cool RPG-inspired: flat dark menu, four-column creator,
+-- encounter dialogues and separate reward sections from the original MainUI.
+local T=require(script.Parent.Kit)
+local M={}
+local c=T.c
+
+local function statsFor(choice,content)
+ local stats={}
+ for _,name in ipairs(content.Stats) do
+  stats[name]=3+(content.Races[choice.race].stats[name] or 0)
+   +(content.Traits[choice.trait].stats[name] or 0)
+ end
+ return stats
+end
+
+function M.Menu(v)
+ local p=v.root
+ T.rect(p,0,0,1280,720,Color3.fromRGB(20,20,30),0,false)
+ T.label(p,"COOL RPG",0,55,1280,65,{size=41,bold=true,align=Enum.TextXAlignment.Center})
+ T.label(p,"TURN-BASED ROGUELIKE RPG",0,123,1280,30,
+  {size=16,color=c.mute,align=Enum.TextXAlignment.Center})
+ local options={
+  {"PLAY","Play",nil,c.green},
+  {"MULTIPLAYER","Info","Multiplayer",c.purple},
+  {"ACHIEVEMENTS","Info","Achievements",c.blue},
+  {"INFO / CODEX","Info","Info",c.blue},
+  {"LEADERBOARD","Info","Leaderboard",c.blue},
+  {"SETTINGS","Info","Settings",c.mute},
+ }
+ for i,o in ipairs(options) do
+  local y=214+(i-1)*66
+  local b=T.button(p,o[1],469,y,342,54,function()
+   if o[2]=="Play" then v.send("Play") else v.send("Info",{kind=o[3]}) end
+  end,o[4])
+  b.BackgroundColor3=i==1 and Color3.fromRGB(44,113,58) or c.raised
+ end
+ T.label(p,"Explore • Fight • Gather • Upgrade • Survive",0,649,1280,25,
+  {size=14,color=c.mute,align=Enum.TextXAlignment.Center})
+end
+
+function M.Creation(v)
+ local p=v.root;local choice=v.choice;local content=v.content
+ T.label(p,"Choose your race, class and trait. Preview your character on the right.",28,77,1220,28,
+  {size=15,color=c.mute})
+ local groups={
+  {"RACES","race",content.Races,c.blue,0},
+  {"CLASSES","class",content.Classes,c.red,1},
+  {"TRAITS","trait",content.Traits,c.purple,2},
+ }
+ for _,g in ipairs(groups) do
+  local x=27+g[5]*285
+  local col=T.panel(p,x,115,272,480,g[1],g[4])
+  local scroll=T.scroll(col,12,57,248,407)
+  for _,name in ipairs(T.keys(g[3])) do
+   local item=g[3][name]
+   local info=g[2]=="class" and item or item.description
+   T.entry(scroll,name,info,function()
+    choice[g[2]]=name
+    v.redraw()
+   end,g[4],75,choice[g[2]]==name)
+  end
+ end
+ local col=T.panel(p,884,115,365,480,"CHARACTER",c.gold)
+ T.label(col,choice.race.."  "..choice.class,18,61,326,37,{size=24,bold=true})
+ T.label(col,"Trait: "..choice.trait,18,101,330,23,{size=15,color=c.green})
+ T.label(col,content.Classes[choice.class],18,138,324,100,
+  {size=15,color=c.mute})
+ T.rect(col,17,252,330,1,c.border,.4,false)
+ T.label(col,"STARTING STATS",18,263,329,28,{size=16,bold=true,color=c.gold})
+ local stats=statsFor(choice,content)
+ for i,key in ipairs(content.Stats) do
+  T.label(col,key,22,300+(i-1)*22,225,23,{size=13,color=c.mute})
+  T.label(col,tostring(stats[key]),267,300+(i-1)*22,60,23,
+   {size=14,bold=true,align=Enum.TextXAlignment.Right})
+ end
+ local footer=T.rect(p,0,607,1280,77,c.panel,0,false)
+ T.button(footer,"BACK",31,13,197,48,function() v.send("BackCreation") end,c.mute)
+ local start=T.button(footer,"CONTINUE",1040,13,203,48,
+  function() v.send("Confirm",choice) end,c.green)
+ start.BackgroundColor3=Color3.fromRGB(44,113,58)
+end
+
+function M.Event(v)
+ local s=v.state;local p=v.root
+ local panel=T.panel(p,79,100,1122,510,s.eventName or "RANDOM EVENT",c.gold)
+ T.label(panel,"You encounter something unexpected along your route. How will you respond?",
+  32,59,1040,66,{size=18,color=c.white})
+ T.rect(panel,27,137,1068,2,c.border,.45,false)
+ local options=s.eventChoices or {}
+ for i,opt in ipairs(options) do
+  T.button(panel,opt.label,34,166+(i-1)*83,480,61,
+   function() v.send("EventChoice",{choice=opt.id}) end,
+   i==#options and c.mute or c.gold)
+ end
+ local info=T.panel(panel,552,158,536,284,"EVENT DETAILS",c.blue)
+ T.label(info,"Your choices influence the next encounter, the items you find, and the gold you earn.",
+  18,63,486,101,{size=17,color=c.mute})
+ T.label(info,"Some encounters can lead into a special battle. Skipping an event is always an option when offered.",
+  18,184,486,71,{size=14,color=c.mute})
+end
+
+function M.Reward(v)
+ local s=v.state;local r=s.reward;local p=v.root
+ local hasLevel=(r.levelUps or 0)>0
+ local offset=hasLevel and 0 or 100
+ if hasLevel then
+  local level=T.panel(p,56,83,1168,249,"LEVEL UP  •  CHOOSE AN UPGRADE",c.gold)
+  for i,u in ipairs(r.choices or {}) do
+   local x=24+(i-1)*386
+   T.button(level,u.name,x,65,364,67,function()
+    if not r.selected then v.send("Upgrade",{name=u.name}) end
+   end,r.selected and c.mute or c.green)
+   T.label(level,u.desc,x+8,143,347,76,{size=15,color=c.mute})
+  end
+ else
+  T.label(p,"ENCOUNTER COMPLETE",0,101,1280,65,
+   {size=31,bold=true,align=Enum.TextXAlignment.Center,color=c.green})
+ end
+ local rewards=T.panel(p,112,348-offset,1056,287,"VICTORY REWARDS",c.green)
+ T.label(rewards,"EXP & GOLD",22,57,340,25,{size=15,bold=true,color=c.gold})
+ T.label(rewards,"+"..(r.xp or 0).." EXP      +"..(r.gold or 0).." GOLD",22,83,968,25,
+  {size=17,bold=true})
+ T.rect(rewards,19,119,1016,1,c.border,.45,false)
+ T.label(rewards,"ITEMS DROPPED",22,131,340,25,{size=15,bold=true,color=c.blue})
+ T.label(rewards,(r.item and r.item~="") and r.item or "No item found",22,157,968,25,
+  {size=16})
+ T.rect(rewards,19,195,1016,1,c.border,.45,false)
+ T.label(rewards,"OTHER REWARDS",22,206,340,25,{size=15,bold=true,color=c.purple})
+ T.label(rewards,r.summary or "Encounter completed",22,234,968,27,
+  {size=15,color=c.mute})
+ T.button(p,"CONTINUE",492,648,296,41,function()
+  if r.selected then v.send("Continue") end
+ end,r.selected and c.green or c.mute)
+ if not r.selected then T.label(p,"Select an upgrade above before continuing",802,649,380,38,{size=13,color=c.mute}) end
+end
+
+function M.Finale(v)
+ local dead=v.state.phase=="Death";local r=v.state.run;local p=v.root
+ local panel=T.panel(p,247,131,786,495,dead and "YOU HAVE FALLEN" or "VICTORY",dead and c.red or c.green)
+ T.label(panel,dead and "YOUR ADVENTURE ENDS HERE" or "THE JOURNEY IS COMPLETE",
+  30,79,726,85,{size=27,bold=true,color=dead and c.red or c.green,
+   align=Enum.TextXAlignment.Center})
+ T.label(panel,string.format("Level %d  •  %d enemies defeated  •  %d victories",
+  r.level,r.kills,r.wins),40,175,706,51,{size=17,color=c.mute,align=Enum.TextXAlignment.Center})
+ T.button(panel,"START A NEW GAME",200,282,386,57,function() v.send("NewRun") end,c.green)
+ T.label(panel,"The original game also offers a run summary and a main menu return.",
+  40,372,700,39,{size=13,color=c.mute,align=Enum.TextXAlignment.Center})
+end
+
+function M.Info(v)
+ local s=v.state;local topic=s.info or "Info"
+ local panel=T.panel(v.root,158,112,965,480,topic:upper(),c.blue)
+ local details={
+  Multiplayer="The four-player party mode is not yet playable in this prototype. The original project's party menus have not been connected to this build.",
+  Achievements="Achievements unlock races, classes, traits and other content. Long-term achievement saving is planned but not implemented here.",
+  Leaderboard="The original project tracks longest runs. The new prototype does not yet persist global leaderboards.",
+  Settings="Adjust Roblox audio and controls in the built-in settings. More game-specific options will follow.",
+  Info="STRENGTH: physical damage. DEFENSE: HP and damage reduction. SPEED: turn order and evasion. INTELLIGENCE: magical damage. LUCK: criticals. CHARISMA: gold and events. HOLINESS: healing.",
+ }
+ T.label(panel,details[topic] or details.Info,33,90,899,205,{size=19,color=c.white})
+ T.button(panel,"BACK",342,367,280,52,function() v.send("BackInfo") end,c.mute)
+end
+return M
+]]></ProtectedString>
+          </Properties>
+        </Item>
+      </Item>
+    </Item>
+  </Item>
+</roblox>

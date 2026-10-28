@@ -1,114 +1,164 @@
 --!strict
--- Front-end screens: central menu, three-column creation, events, rewards, death.
+-- Original Cool RPG-inspired: flat dark menu, four-column creator,
+-- encounter dialogues and separate reward sections from the original MainUI.
 local T=require(script.Parent.Kit)
 local M={}
 local c=T.c
-local function runStats(choices,content)
- local s={}
- for _,key in ipairs(content.Stats) do
-  s[key]=3+(content.Races[choices.race].stats[key] or 0)+(content.Traits[choices.trait].stats[key] or 0)
+
+local function statsFor(choice,content)
+ local stats={}
+ for _,name in ipairs(content.Stats) do
+  stats[name]=3+(content.Races[choice.race].stats[name] or 0)
+   +(content.Traits[choice.trait].stats[name] or 0)
  end
- return s
+ return stats
 end
+
 function M.Menu(v)
  local p=v.root
- T.label(p,"YOUR ADVENTURE BEGINS",0,119,1280,46,{size=31,bold=true,align=Enum.TextXAlignment.Center,color=c.gold})
- T.label(p,"CREATE A HERO  •  CHOOSE YOUR PATH  •  SURVIVE",0,172,1280,31,{size=15,align=Enum.TextXAlignment.Center,color=c.mute})
- local center=T.panel(p,470,230,340,365,nil)
- local items={{"INFO","Info","Info",c.blue},{"PLAY","Play",nil,c.gold},
-  {"MULTIPLAYER","Info","Multiplayer",c.purple},{"ACHIEVEMENTS","Info","Achievements",c.blue},
-  {"LEADERBOARD","Info","Leaderboard",c.blue},{"SETTINGS","Info","Settings",c.mute}}
- for i,item in ipairs(items) do
-  T.button(center,item[1],32,17+(i-1)*56,276,46,function()
-   if item[2]=="Play" then v.send("Play") else v.send("Info",{kind=item[3]}) end
-  end,item[4])
+ T.rect(p,0,0,1280,720,Color3.fromRGB(20,20,30),0,false)
+ T.label(p,"COOL RPG",0,55,1280,65,{size=41,bold=true,align=Enum.TextXAlignment.Center})
+ T.label(p,"TURN-BASED ROGUELIKE RPG",0,123,1280,30,
+  {size=16,color=c.mute,align=Enum.TextXAlignment.Center})
+ local options={
+  {"PLAY","Play",nil,c.green},
+  {"MULTIPLAYER","Info","Multiplayer",c.purple},
+  {"ACHIEVEMENTS","Info","Achievements",c.blue},
+  {"INFO / CODEX","Info","Info",c.blue},
+  {"LEADERBOARD","Info","Leaderboard",c.blue},
+  {"SETTINGS","Info","Settings",c.mute},
+ }
+ for i,o in ipairs(options) do
+  local y=214+(i-1)*66
+  local b=T.button(p,o[1],469,y,342,54,function()
+   if o[2]=="Play" then v.send("Play") else v.send("Info",{kind=o[3]}) end
+  end,o[4])
+  b.BackgroundColor3=i==1 and Color3.fromRGB(44,113,58) or c.raised
  end
- T.label(p,"A turn-based fantasy roguelike inspired by branching adventure RPGs.",255,614,770,31,{size=13,align=Enum.TextXAlignment.Center,color=c.mute})
+ T.label(p,"Explore • Fight • Gather • Upgrade • Survive",0,649,1280,25,
+  {size=14,color=c.mute,align=Enum.TextXAlignment.Center})
 end
+
 function M.Creation(v)
  local p=v.root;local choice=v.choice;local content=v.content
- T.subtitle(p,"CHARACTER CREATION",40,85,950)
- T.label(p,"Choose one class, one race and one trait. Inspect your final build before continuing.",40,119,1110,28,{size=14,color=c.mute})
- local defs={{"CLASS","class",content.Classes,c.purple},{"RACE","race",content.Races,c.blue},{"TRAIT","trait",content.Traits,c.green}}
- for col,d in ipairs(defs) do
-  local x=36+(col-1)*282
-  local panel=T.panel(p,x,165,268,426,d[1],d[4])
-  local list=T.scroll(panel,12,60,244,350)
-  for _,name in ipairs(T.keys(d[3])) do
-   local selected=choice[d[2]]==name
-   local info=d[2]=="class" and d[3][name] or d[3][name].description
-   T.entry(list,name,info,function() choice[d[2]]=name;v.redraw() end,selected and c.gold or d[4],67,selected)
+ T.label(p,"Choose your race, class and trait. Preview your character on the right.",28,77,1220,28,
+  {size=15,color=c.mute})
+ local groups={
+  {"RACES","race",content.Races,c.blue,0},
+  {"CLASSES","class",content.Classes,c.red,1},
+  {"TRAITS","trait",content.Traits,c.purple,2},
+ }
+ for _,g in ipairs(groups) do
+  local x=27+g[5]*285
+  local col=T.panel(p,x,115,272,480,g[1],g[4])
+  local scroll=T.scroll(col,12,57,248,407)
+  for _,name in ipairs(T.keys(g[3])) do
+   local item=g[3][name]
+   local info=g[2]=="class" and item or item.description
+   T.entry(scroll,name,info,function()
+    choice[g[2]]=name
+    v.redraw()
+   end,g[4],75,choice[g[2]]==name)
   end
  end
- local view=T.panel(p,882,165,361,426,"CHARACTER PREVIEW",c.gold)
- T.label(view,choice.race.."  "..choice.class,18,61,325,36,{size=21,bold=true,color=c.gold})
- T.label(view,"Trait: "..choice.trait,18,103,325,23,{size=14,color=c.green})
- T.label(view,content.Classes[choice.class],18,134,323,92,{size=14,color=c.mute})
- T.rect(view,17,233,325,1,c.border,.2,false)
- T.label(view,"STARTING ATTRIBUTES",18,242,324,26,{size=14,color=c.gold,bold=true})
- local st=runStats(choice,content)
+ local col=T.panel(p,884,115,365,480,"CHARACTER",c.gold)
+ T.label(col,choice.race.."  "..choice.class,18,61,326,37,{size=24,bold=true})
+ T.label(col,"Trait: "..choice.trait,18,101,330,23,{size=15,color=c.green})
+ T.label(col,content.Classes[choice.class],18,138,324,100,
+  {size=15,color=c.mute})
+ T.rect(col,17,252,330,1,c.border,.4,false)
+ T.label(col,"STARTING STATS",18,263,329,28,{size=16,bold=true,color=c.gold})
+ local stats=statsFor(choice,content)
  for i,key in ipairs(content.Stats) do
-  local row=math.floor((i-1)/2);local col=(i-1)%2
-  T.label(view,key.."  "..st[key],18+col*166,280+row*29,163,28,{size=13})
+  T.label(col,key,22,300+(i-1)*22,225,23,{size=13,color=c.mute})
+  T.label(col,tostring(stats[key]),267,300+(i-1)*22,60,23,
+   {size=14,bold=true,align=Enum.TextXAlignment.Right})
  end
- T.button(p,"← BACK",510,611,115,44,function() v.send("BackCreation") end,c.mute)
- T.button(p,"BEGIN ADVENTURE →",640,611,245,44,function() v.send("Confirm",choice) end,c.green)
+ local footer=T.rect(p,0,607,1280,77,c.panel,0,false)
+ T.button(footer,"BACK",31,13,197,48,function() v.send("BackCreation") end,c.mute)
+ local start=T.button(footer,"CONTINUE",1040,13,203,48,
+  function() v.send("Confirm",choice) end,c.green)
+ start.BackgroundColor3=Color3.fromRGB(44,113,58)
 end
+
 function M.Event(v)
- local s=v.state
- T.subtitle(v.root,"A NEW ENCOUNTER",42,87,600)
- local panel=T.panel(v.root,42,129,1196,482,s.eventName or "Mysterious encounter",c.purple)
- T.label(panel,"An unexpected choice lies along your journey. Your decision may change your rewards or lead directly into combat.",30,66,1090,75,{size=18,color=c.mute})
- local opts=s.eventChoices or {}
- for i,opt in ipairs(opts) do
-  T.button(panel,opt.label,40,175+(i-1)*80,420,62,function() v.send("EventChoice",{choice=opt.id}) end,i==#opts and c.mute or c.purple)
+ local s=v.state;local p=v.root
+ local panel=T.panel(p,79,100,1122,510,s.eventName or "RANDOM EVENT",c.gold)
+ T.label(panel,"You encounter something unexpected along your route. How will you respond?",
+  32,59,1040,66,{size=18,color=c.white})
+ T.rect(panel,27,137,1068,2,c.border,.45,false)
+ local options=s.eventChoices or {}
+ for i,opt in ipairs(options) do
+  T.button(panel,opt.label,34,166+(i-1)*83,480,61,
+   function() v.send("EventChoice",{choice=opt.id}) end,
+   i==#options and c.mute or c.gold)
  end
- T.panel(panel,516,160,628,256,"THE ROAD AHEAD",c.gold)
- T.label(panel,"There is always a way to walk away from a random encounter. Fighting, bargaining and exploring can have very different results.",544,226,568,112,{size=17,color=c.mute})
+ local info=T.panel(panel,552,158,536,284,"EVENT DETAILS",c.blue)
+ T.label(info,"Your choices influence the next encounter, the items you find, and the gold you earn.",
+  18,63,486,101,{size=17,color=c.mute})
+ T.label(info,"Some encounters can lead into a special battle. Skipping an event is always an option when offered.",
+  18,184,486,71,{size=14,color=c.mute})
 end
+
 function M.Reward(v)
  local s=v.state;local r=s.reward;local p=v.root
- T.subtitle(p,"ENCOUNTER COMPLETE",48,84,900)
- local rewards=T.panel(p,48,360,1185,266,"REWARDS",c.green)
- T.label(rewards,r.summary or "You survived.",23,57,1070,36,{size=19,bold=true})
- T.label(rewards,"+"..(r.xp or 0).." EXP",24,112,240,33,{size=23,bold=true,color=c.blue})
- T.label(rewards,"+"..(r.gold or 0).." GOLD",275,112,258,33,{size=23,bold=true,color=c.gold})
- T.label(rewards,(r.item and r.item~="") and ("ITEM FOUND  •  "..r.item) or "NO ITEM FOUND",541,112,600,33,{size=16,color=c.mute})
- T.button(rewards,r.selected and "CONTINUE TO CAMP →" or "CHOOSE AN UPGRADE ABOVE",440,202,307,44,function()
-  if r.selected then v.send("Continue") end
- end,r.selected and c.green or c.mute)
- if r.levelUps>0 then
-  local upgradePanel=T.panel(p,48,125,1185,219,"LEVEL UP!  •  CHOOSE ONE UPGRADE",c.gold)
+ local hasLevel=(r.levelUps or 0)>0
+ local offset=hasLevel and 0 or 100
+ if hasLevel then
+  local level=T.panel(p,56,83,1168,249,"LEVEL UP  •  CHOOSE AN UPGRADE",c.gold)
   for i,u in ipairs(r.choices or {}) do
-   local x=23+(i-1)*386
-   local card=T.button(upgradePanel,u.name,x,67,367,53,function()
+   local x=24+(i-1)*386
+   T.button(level,u.name,x,65,364,67,function()
     if not r.selected then v.send("Upgrade",{name=u.name}) end
-   end,r.selected and c.mute or c.gold)
-   T.label(upgradePanel,u.desc,x+11,128,345,57,{size=15,color=c.mute})
+   end,r.selected and c.mute or c.green)
+   T.label(level,u.desc,x+8,143,347,76,{size=15,color=c.mute})
   end
  else
-  local top=T.panel(p,48,125,1185,219,"JOURNEY PROGRESS",c.gold)
-  T.label(top,"No level-up this time. Return to camp to manage inventory, skills and your class ability.",25,80,1120,70,{size=18,color=c.mute})
+  T.label(p,"ENCOUNTER COMPLETE",0,101,1280,65,
+   {size=31,bold=true,align=Enum.TextXAlignment.Center,color=c.green})
  end
+ local rewards=T.panel(p,112,348-offset,1056,287,"VICTORY REWARDS",c.green)
+ T.label(rewards,"EXP & GOLD",22,57,340,25,{size=15,bold=true,color=c.gold})
+ T.label(rewards,"+"..(r.xp or 0).." EXP      +"..(r.gold or 0).." GOLD",22,83,968,25,
+  {size=17,bold=true})
+ T.rect(rewards,19,119,1016,1,c.border,.45,false)
+ T.label(rewards,"ITEMS DROPPED",22,131,340,25,{size=15,bold=true,color=c.blue})
+ T.label(rewards,(r.item and r.item~="") and r.item or "No item found",22,157,968,25,
+  {size=16})
+ T.rect(rewards,19,195,1016,1,c.border,.45,false)
+ T.label(rewards,"OTHER REWARDS",22,206,340,25,{size=15,bold=true,color=c.purple})
+ T.label(rewards,r.summary or "Encounter completed",22,234,968,27,
+  {size=15,color=c.mute})
+ T.button(p,"CONTINUE",492,648,296,41,function()
+  if r.selected then v.send("Continue") end
+ end,r.selected and c.green or c.mute)
+ if not r.selected then T.label(p,"Select an upgrade above before continuing",802,649,380,38,{size=13,color=c.mute}) end
 end
+
 function M.Finale(v)
- local p=v.root;local r=v.state.run;local dead=v.state.phase=="Death"
- local panel=T.panel(p,250,155,780,400,dead and "YOUR JOURNEY HAS ENDED" or "VICTORY!",dead and c.red or c.gold)
- T.label(panel,dead and "YOU HAVE FALLEN" or "THE FINAL BOSS IS DEFEATED",25,75,730,65,{size=29,bold=true,align=Enum.TextXAlignment.Center,color=dead and c.red or c.gold})
- T.label(panel,"Level "..r.level.."     •     "..r.kills.." foes defeated     •     "..r.wins.." combats won",60,155,660,55,{size=17,color=c.mute,align=Enum.TextXAlignment.Center})
- T.button(panel,"START NEW GAME",211,266,358,51,function() v.send("NewRun") end,c.green)
+ local dead=v.state.phase=="Death";local r=v.state.run;local p=v.root
+ local panel=T.panel(p,247,131,786,495,dead and "YOU HAVE FALLEN" or "VICTORY",dead and c.red or c.green)
+ T.label(panel,dead and "YOUR ADVENTURE ENDS HERE" or "THE JOURNEY IS COMPLETE",
+  30,79,726,85,{size=27,bold=true,color=dead and c.red or c.green,
+   align=Enum.TextXAlignment.Center})
+ T.label(panel,string.format("Level %d  •  %d enemies defeated  •  %d victories",
+  r.level,r.kills,r.wins),40,175,706,51,{size=17,color=c.mute,align=Enum.TextXAlignment.Center})
+ T.button(panel,"START A NEW GAME",200,282,386,57,function() v.send("NewRun") end,c.green)
+ T.label(panel,"The original game also offers a run summary and a main menu return.",
+  40,372,700,39,{size=13,color=c.mute,align=Enum.TextXAlignment.Center})
 end
+
 function M.Info(v)
- local s=v.state;local topic=s.info or "INFO"
- local panel=T.panel(v.root,178,117,926,492,topic:upper(),c.blue)
- local copy={
-  Multiplayer="Multiplayer is not playable in this first prototype. Synchronized parties and four-player combat require a future server update.",
-  Achievements="Achievements can eventually unlock classes, races, traits, and special starting options. This early build does not persist those unlocks.",
-  Leaderboard="Longest-run leaderboards are planned. Global ranking and DataStore persistence have not been implemented in this prototype.",
-  Settings="The in-game settings panel is planned. You can adjust game audio and graphics through Roblox's built-in settings menu.",
-  Info="STRENGTH increases physical damage. DEFENSE increases health and damage reduction. SPEED influences evasion. INTELLIGENCE increases magic damage and MP. LUCK influences critical hits. CHARISMA supports economy and encounters. HOLINESS improves healing and holy effects.",
+ local s=v.state;local topic=s.info or "Info"
+ local panel=T.panel(v.root,158,112,965,480,topic:upper(),c.blue)
+ local details={
+  Multiplayer="The four-player party mode is not yet playable in this prototype. The original project's party menus have not been connected to this build.",
+  Achievements="Achievements unlock races, classes, traits and other content. Long-term achievement saving is planned but not implemented here.",
+  Leaderboard="The original project tracks longest runs. The new prototype does not yet persist global leaderboards.",
+  Settings="Adjust Roblox audio and controls in the built-in settings. More game-specific options will follow.",
+  Info="STRENGTH: physical damage. DEFENSE: HP and damage reduction. SPEED: turn order and evasion. INTELLIGENCE: magical damage. LUCK: criticals. CHARISMA: gold and events. HOLINESS: healing.",
  }
- T.label(panel,copy[topic] or copy.Info,40,91,838,217,{size=19,color=c.mute})
- T.button(panel,"← BACK",341,385,246,48,function() v.send("BackInfo") end,c.blue)
+ T.label(panel,details[topic] or details.Info,33,90,899,205,{size=19,color=c.white})
+ T.button(panel,"BACK",342,367,280,52,function() v.send("BackInfo") end,c.mute)
 end
 return M
