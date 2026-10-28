@@ -134,7 +134,7 @@ end
 function P.UnlockCry(run,index)
  if run.class~="Warrior" or run.cryPoints<=0 or typeof(index)~="number" or index%1~=0 then return false end
  if index<1 or index>9 or run.cryOwned[tostring(index)] then return false end
- if index>3 and not run.cryOwned[index-3] then return false end
+ if index>3 and not run.cryOwned[tostring(index-3)] then return false end
  run.cryOwned[tostring(index)]=true;run.cryPoints-=1;return true
 end
 function P.CraftSpell(run,area,element,effect)

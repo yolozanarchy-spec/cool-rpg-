@@ -1,66 +1,52 @@
-# Cool RPG — Roblox Studio UI redesign v0.2
+# Cool RPG — Screenshot UI Recreation v0.4
 
-This is the updated Studio place for your existing **Cool RPG** prototype, based on the 32-page `yolo game .pdf` UI reference. It preserves the v0.1 game loop, character abilities, enemies and progression. It has **not** been tested by launching Roblox Studio in this environment.
+Roblox Studio place and editable Luau source for the screenshot-driven redesign of the Cool RPG prototype.
 
-## Import into Roblox Studio
+## Import
 
-1. Download `CoolRPG_UI_v0.2.rbxlx` (or open `CoolRPG_Prototype.rbxlx` in the repository).
-2. In Roblox Studio, choose **File > Open from File** and select the `.rbxlx` file.
-3. Select **Play**. Your new UI should appear in the same game.
-4. If you need to keep your existing published place, publish this file with **File > Publish to Roblox As…** and select the appropriate experience. **Back up your existing place first**, because replacing a published place overwrites its server-side scripts and content.
+1. Download/extract `CoolRPG_ScreenshotUI_v0.4.rbxlx`.
+2. Roblox Studio → **File → Open from File** → select `.rbxlx`.
+3. Press **Play**, choose a race, class, and trait, and use the bottom bar to navigate.
+4. Keep a backup before replacing any existing place; this is a separate project snapshot.
 
-This full-place import is intended for the standalone v0.1 Cool RPG prototype. If you've made local changes since importing v0.1, merge the `src/` changes instead of overwriting your customized place.
+## UI references
 
-## What changed visually
+The user supplied **ten actual original-game screenshots** on October 27, 2026. v0.4 uses their charcoal backgrounds, flat slate buttons, six-button dock, muted gold headings, and colored data indicators as its main layout references. These screenshots are not distributed as Roblox assets, nor are they claimed to be game screenshots of v0.4.
 
-- **Main menu (PDF p. 4):** centered vertical column of Info, Play, Multiplayer, Achievements, Leaderboard, and Settings.
-- **Creation (PDF p. 7):** independent scrolling Class, Race and Trait columns, live preview panel with descriptions and starting stats, Back and Begin Adventure.
-- **Campsite (PDF pp. 9–11):** five buttons along bottom for Adventure, Inventory, Crafting, Skills and Class Ability; right-hand character sheet remains visible in utility menus. Stats / Codex is an additional control.
-- **Map (PDF p. 3):** ten visual rows with branching connection lines and red enemy, blue boss and gray event nodes; merchant/rest/special also have their own colors. Only connected nodes in the current row can be clicked.
-- **Combat (PDF pp. 2, 13):** left turn order, centrally selectable enemy panels, bottom action grid of Attack / Items / Escape / Skills; selecting Items or Skills replaces the grid with a scrolling list; a fixed-size scrollable combat log sits on the right. Enemy and player health information always stays visible.
-- **Reward (PDF p. 15):** three level-up choices across the upper area, reward/loot/EXP summary beneath, Continue to Camp.
-- **Event and death (PDF pp. 16–17):** clear event choices and a separate defeat menu.
-- Dark fantasy styling with subtle borders, accessible text contrast, gold/blue/green accents, and a 1280×720 letterboxed scaling layout for different desktop sizes.
+### Screens recreated
 
-## Gameplay bridge additions
+- **Inventory:** left equipment grid, scrolling filter tabs and inventory tiles, right item-details and compare panel. Equip, use, and unequip actions are wired to the server.
+- **Crafting:** categories and recipe cards left; ingredient costs (red/green), item name, and server-gated craft action right.
+- **Skills:** vertical scroll list left and detailed reference panel right. Enemy skill entries are *codex references*, not unlockable spells in the current prototype.
+- **Character Stats:** one vertical scrolling sheet with attribute components, health/mana, multipliers actually available, equipment bonuses, blessings, curses and progress.
+- **Adventure Map:** charcoal board, white path connectors, circular icons, red available nodes, stage/floor/boss header.
+- **Necromancy:** body-slot mannequin, five tabs, owned monster part tiles, selection details, **Attach** action, zombie stat preview.
+- **Spellcraft:** large preview left and element/target/status controls right with working **Save Spell** request. The present backend supports Fire/Ice/Arcane, single/all enemies, and None/Burn/Poison.
+- **Bazaar:** two brown-and-gold shop panes, item prices, refresh using MP, and buy control.
+- **War Cry:** circular branching skill nodes with a central yellow root, available points, dependency checking and server-validated unlocks.
+- **Hunter and Paladin:** class-special UI remains interactive (trophies, traps, bounties, blessings and curses).
 
-- **Guard is now a universal skill** selectable through Skills; it provides 3 Barrier and 50% guard damage reduction for the following enemy attack cycle. The old standalone Defend button is removed.
-- **Escape** is an action in combat with a 70% success chance; bosses cannot be escaped. Failing an escape uses a turn, allowing enemies to attack. Successfully escaping ends the encounter without rewards, advances the map and opens the post-encounter summary.
-- Server now accepts Back from character creation, campsite tab-switching from utility tabs, and Settings/info navigation across more screens.
-- Combat log retains up to 120 actions (previously 8) and the client displays them in a fixed-size scrolling panel.
+The bottom tab adapts to the selected class: War Cry, Necromancy, Spellcraft, Bazaar, Hunting or Divine Favor.
 
-## Important limitations
+## Backend features added for UI
 
-- This is a functional layout implementation built with native Roblox UI objects, **not a pixel-exact recreation of the screenshots** or a new 3D scene. The source PDF contains both wireframes and example images; this version adapts their placement and interactions to the existing 2D prototype.
-- The UI is scaled for desktop first. Mobile, console/gamepad focus navigation, localization and screen-reader-specific accessibility need dedicated testing.
-- Multiplayer and persistent achievements/leaderboards remain placeholders, as in v0.1. The settings screen explains how to use Roblox's built-in settings.
-- No Roblox Studio runtime, network latency or gameplay simulation test has been run here; after importing, verify the output log for errors.
+- Server-side `Unequip` handling: moves currently equipped items back into inventory; only valid equipment slots accepted.
+- Campsite `Merchant` shortcut opens the personal Bazaar (existing shop logic reused).
+- Four additional basic, data-driven crafting entries for the screenshot-themed bone equipment/materials. These are additions, not copies of the original game's entire recipe list.
 
-## Files
+## Technical organization
 
-The Rojo-compatible `src` directory is included for targeted merging. The largest script is about 230 lines.
+- `StarterPlayer/StarterPlayerScripts/UI.client.lua`: phase router and server requests.
+- `Views/Kit.lua`, `Views/Shell.lua`: theme, low-level widgets, navigation dock.
+- `Views/Inventory.lua`, `Views/Crafting.lua`, `Views/Skills.lua`, `Views/Character.lua`, `Views/WorldMap.lua`: independent screens.
+- `Views/Necromancy.lua`, `Views/WarCry.lua`, `Views/Spellcraft.lua`, `Views/MerchantScreen.lua`, `Views/Class.lua`: class screens and routing.
+- `ServerScriptService/Game.server.lua`: server-authoritative requests.
+- `ReplicatedStorage/Shared/`: gameplay data/simulation.
 
-```
-ReplicatedStorage/Shared/Adventure.lua
-ReplicatedStorage/Shared/Battle.lua          # Escape, Guard, extended combat log
-ReplicatedStorage/Shared/Content.lua
-ReplicatedStorage/Shared/Enemies.lua
-ReplicatedStorage/Shared/Progress.lua
-ServerScriptService/Game.server.lua        # transitions, Escape outcome, navigation
-StarterPlayer/StarterPlayerScripts/UI.client.lua
-StarterPlayer/StarterPlayerScripts/Views/Kit.lua
-StarterPlayer/StarterPlayerScripts/Views/Menus.lua
-StarterPlayer/StarterPlayerScripts/Views/Camp.lua
-StarterPlayer/StarterPlayerScripts/Views/Combat.lua
-StarterPlayer/StarterPlayerScripts/Views/Class.lua
-```
+Every Luau source file is less than 500 lines. No downloaded images, marketplace assets, or executable third-party code are used. The built place uses a 1280 × 720 logical canvas that scales to the user's viewport.
 
-## Suggested Studio smoke test
+## Known limits / testing
 
-1. Info > Back > Play > choose a different class/race/trait > preview updates > Begin Adventure.
-2. Camp > Inventory > Crafting > Skills > Class ability > Adventure. Confirm bottom nav remains useful and character stats stay visible.
-3. Map > select a red Combat node; verify enemy and turn queue/scroll log.
-4. Combat > Skills > Guard > enemy turn; Skills > class ability; Items > potion; Attack; Escape (success/failure).
-5. Win another encounter to check rewards and optional level-up choices, then Continue to Camp.
-6. Try Hunter trophies/trap/bounty, Warrior's randomized skill tree and Paladin's unlimited blessing stacking.
-7. Check View > Output and test at multiple resolutions.
+This is a visual/functionality pass over a **limited playable prototype**, not a restoration of every system in the user's full original Roblox place. The screenshot images show more items, skills, spell modifiers, stats and skill-tree upgrades than are currently implemented in the prototype. Unsupported spell modifiers are deliberately not presented as playable. Multiplayer and persistent leaderboards are still out of scope.
+
+**Validation:** The `.rbxlx` XML and all embedded script paths are validated locally. Roblox Studio runtime and layout testing cannot be performed in this environment. Test tabs at desktop and laptop viewport sizes, crafting, equipping/unequipping, map progression, each class ability and combat, and report runtime exceptions from Studio Output.

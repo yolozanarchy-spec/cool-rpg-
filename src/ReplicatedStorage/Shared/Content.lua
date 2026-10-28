@@ -52,8 +52,15 @@ D.Items = {
  ["Rabbit Hide"]={kind="Material",price=8},
  ["Spider Silk"]={kind="Material",price=12},
  ["Monster Essence"]={kind="Part",price=15,stat="Strength",bonus=1},
+ ["Bone Arrows"]={kind="Material",price=14},
+ ["Bone Glue"]={kind="Material",price=9},
+ ["Bone Plate"]={kind="Material",price=16},
 }
 D.Recipes = {
+ {name="Bone Bow",need={["Bone Fragment"]=4,["Spider Silk"]=1},qty=1},
+ {name="Bone Arrows",need={["Bone Fragment"]=2,["Oak Wood"]=1},qty=2},
+ {name="Bone Glue",need={["Bone Fragment"]=1,["Herbs"]=1},qty=1},
+ {name="Bone Plate",need={["Bone Fragment"]=3,["Bone Glue"]=1},qty=1},
  {name="Health Potion",need={Herbs=2},qty=1},
  {name="Iron Sword",need={["Iron Ore"]=3,["Oak Wood"]=1},qty=1},
  {name="Wooden Shield",need={["Oak Wood"]=3},qty=1},
