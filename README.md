@@ -1,72 +1,66 @@
-# Cool RPG — Roblox Studio prototype v0.1
+# Cool RPG — Roblox Studio UI redesign v0.2
 
-This is a **new playable vertical slice**, not a finished implementation of the full 23-section design document. It was created from the supplied design files because the GitHub repository was empty. It has not been tested inside a running Roblox Studio session.
+This is the updated Studio place for your existing **Cool RPG** prototype, based on the 32-page `yolo game .pdf` UI reference. It preserves the v0.1 game loop, character abilities, enemies and progression. It has **not** been tested by launching Roblox Studio in this environment.
 
-## Fastest way to open
+## Import into Roblox Studio
 
-1. Install/open **Roblox Studio** on your computer.
-2. Use **File → Open from File** and select `CoolRPG_Prototype.rbxlx`.
-3. Press **Play**. The on-screen `COOL RPG` menu opens automatically.
-4. If you want to publish, use Studio's **File → Publish to Roblox As…**.
+1. Download `CoolRPG_UI_v0.2.rbxlx` (or open `CoolRPG_Prototype.rbxlx` in the repository).
+2. In Roblox Studio, choose **File > Open from File** and select the `.rbxlx` file.
+3. Select **Play**. Your new UI should appear in the same game.
+4. If you need to keep your existing published place, publish this file with **File > Publish to Roblox As…** and select the appropriate experience. **Back up your existing place first**, because replacing a published place overwrites its server-side scripts and content.
 
-The `.rbxlx` file is the complete Studio place format, including the scripts. You do **not** need Rojo to open it. It generates a 2D UI in the PlayerGui and a simple spawn platform. The viewport behind the UI is not a finished game world.
+This full-place import is intended for the standalone v0.1 Cool RPG prototype. If you've made local changes since importing v0.1, merge the `src/` changes instead of overwriting your customized place.
 
-## Source-code import (optional)
+## What changed visually
 
-The `src/` tree and `default.project.json` form a **Rojo** project. If you use Rojo, sync `default.project.json` into an existing Roblox place. Do not mix the Rojo sync and `.rbxlx` import into the *same* place, or you will duplicate scripts.
+- **Main menu (PDF p. 4):** centered vertical column of Info, Play, Multiplayer, Achievements, Leaderboard, and Settings.
+- **Creation (PDF p. 7):** independent scrolling Class, Race and Trait columns, live preview panel with descriptions and starting stats, Back and Begin Adventure.
+- **Campsite (PDF pp. 9–11):** five buttons along bottom for Adventure, Inventory, Crafting, Skills and Class Ability; right-hand character sheet remains visible in utility menus. Stats / Codex is an additional control.
+- **Map (PDF p. 3):** ten visual rows with branching connection lines and red enemy, blue boss and gray event nodes; merchant/rest/special also have their own colors. Only connected nodes in the current row can be clicked.
+- **Combat (PDF pp. 2, 13):** left turn order, centrally selectable enemy panels, bottom action grid of Attack / Items / Escape / Skills; selecting Items or Skills replaces the grid with a scrolling list; a fixed-size scrollable combat log sits on the right. Enemy and player health information always stays visible.
+- **Reward (PDF p. 15):** three level-up choices across the upper area, reward/loot/EXP summary beneath, Continue to Camp.
+- **Event and death (PDF pp. 16–17):** clear event choices and a separate defeat menu.
+- Dark fantasy styling with subtle borders, accessible text contrast, gold/blue/green accents, and a 1280×720 letterboxed scaling layout for different desktop sizes.
 
-## What is implemented
+## Gameplay bridge additions
 
-- Main menu, character creator, **4 races, 6 playable base classes, 8 traits**, campsite and stats pages.
-- Procedural map with reachable branch connections, combats, merchants, events, rests and boss on row 10.
-- Server-controlled per-player single-player battle loop, target selection, physical/magic attacks, skill cooldowns, consumables, evasion, critical hits, barrier, guard, Poison, Burn, Stun.
-- Gold, XP, levels, random 3-upgrade selection, class/equipment modifiers, loot, inventory/equip, five crafting recipes, loot merchant, shop refresh for Merchant class.
-- **Warrior:** randomly generated 3-lane × 3-tier Battle Cry tree per run, points gained on level-up and unique Battle Cry effects in combat.
-- **Hunter:** one trophy for **every** defeated enemy (+0.3% damage, up to +25%); precombat Spike/Venom/Snare trap automatically targets the strongest enemy; accepting and completing bounties gives XP/gold.
-- **Paladin:** repeated blessings can stack indefinitely, no active blessing slot limit; request up to 2 pending blessings, which activate after 2–4 won combats and grant Divine Charges to cleanse curses.
-- **Mage:** ten-point custom spell builder combining Fire/Ice/Arcane, single/all target, and optional Poison/Burn, with a battle action.
-- **Necromancer:** zombie ally that automatically attacks and has Head/Arms/Chest/Legs/Core part slots.
-- **Merchant:** camp-only personal shop; MP-spending shop refresh.
-- Enemy database contains the supplied **32 normal enemies, 2 elites and 10 bosses** with their names and core stats. Combat behavior is simplified and does not yet implement each enemy's distinct skill.
-- Separate, modular Luau script files, 48–364 lines each; shared data and single authoritative server entry point.
+- **Guard is now a universal skill** selectable through Skills; it provides 3 Barrier and 50% guard damage reduction for the following enemy attack cycle. The old standalone Defend button is removed.
+- **Escape** is an action in combat with a 70% success chance; bosses cannot be escaped. Failing an escape uses a turn, allowing enemies to attack. Successfully escaping ends the encounter without rewards, advances the map and opens the post-encounter summary.
+- Server now accepts Back from character creation, campsite tab-switching from utility tabs, and Settings/info navigation across more screens.
+- Combat log retains up to 120 actions (previously 8) and the client displays them in a fixed-size scrolling panel.
 
-## Not yet implemented — important
+## Important limitations
 
-- No live multiplayer party/cooperative combat, party matchmaking, or up to four player summons.
-- No DataStore persistence, achievement unlock persistence, or global leaderboards. A run is memory-only and is lost when that server/session ends.
-- The full 25-recipe crafting set, every equipment catalog entry, boss phase changes, 16 independent status-effect rules, complete class perk trees and their artwork are not yet implemented.
-- The skill cost/MP rules, boss schedule and several damage/status formulas still have conflicting earlier design notes; this version chooses a functional prototype behavior rather than pretending the conflicts are settled.
-- No implemented endless-mode loop, challenge difficulty, sound/audio, gamepad-specific UI, item art, paid assets or tutorial.
-- Enemies have catalog attack/HP/defense/speed values, but **do not use unique AI skills** yet; combat is a simplified per-player encounter for this first build.
-- No actual Roblox Studio runtime tests have been performed here. Bugs may remain. Check **View → Output** in Studio if anything fails.
+- This is a functional layout implementation built with native Roblox UI objects, **not a pixel-exact recreation of the screenshots** or a new 3D scene. The source PDF contains both wireframes and example images; this version adapts their placement and interactions to the existing 2D prototype.
+- The UI is scaled for desktop first. Mobile, console/gamepad focus navigation, localization and screen-reader-specific accessibility need dedicated testing.
+- Multiplayer and persistent achievements/leaderboards remain placeholders, as in v0.1. The settings screen explains how to use Roblox's built-in settings.
+- No Roblox Studio runtime, network latency or gameplay simulation test has been run here; after importing, verify the output log for errors.
 
-## Updated class rules (source of truth)
+## Files
 
-**Warrior:** Battle Cry is upgraded through a *randomly generated skill tree each run*, not a fixed linear perk list.
-
-**Hunter:** trophy cabinet records each enemy slain and grants a small scaling bonus; trap maker sets a **precombat trap that strikes the strongest enemy**; bounty board offers contracts for gold/XP.
-
-**Paladin:** blessings may **stack**, with **no active blessing count limit**. Pending blessings are capped at two in this build to stop instant farming; curse removal costs one Divine Charge, gained from completed pending blessings.
-
-## Testing checklist
-
-- Play → race/class/trait selection → Start → Camp → Map → Combat → Reward → Camp.
-- Check skill cooldowns and ability use in combat; defeat enemy and claim level-up upgrade.
-- Hunter: select Snare, then start combat; trap should stun highest-max-HP foe. Check trophy count and bounty progress after kills.
-- Warrior: inspect randomized tree, spend a point, cast Battle Cry.
-- Paladin: request same blessing twice across battles; check stacking and cleansing.
-- Mage: craft 10-point all-target effect spell and use it in battle.
-- Merchant: buy/refresh stock. Necromancer: equip part and watch zombie attack.
-- Open `View → Output` if a request fails and use the warning label in the footer.
-
-## File map
+The Rojo-compatible `src` directory is included for targeted merging. The largest script is about 230 lines.
 
 ```
-ReplicatedStorage/Shared/Content.lua     Race/class/trait/item/upgrade data
-ReplicatedStorage/Shared/Enemies.lua     Enemy catalog data
-ReplicatedStorage/Shared/Adventure.lua   Map branching and events
-ReplicatedStorage/Shared/Progress.lua    Stats, inventory, class progression
-ReplicatedStorage/Shared/Battle.lua      Server combat engine
-ServerScriptService/Game.server.lua      Remote validation and game loop
-StarterPlayer/StarterPlayerScripts/UI.client.lua  Full on-screen 2D UI
+ReplicatedStorage/Shared/Adventure.lua
+ReplicatedStorage/Shared/Battle.lua          # Escape, Guard, extended combat log
+ReplicatedStorage/Shared/Content.lua
+ReplicatedStorage/Shared/Enemies.lua
+ReplicatedStorage/Shared/Progress.lua
+ServerScriptService/Game.server.lua        # transitions, Escape outcome, navigation
+StarterPlayer/StarterPlayerScripts/UI.client.lua
+StarterPlayer/StarterPlayerScripts/Views/Kit.lua
+StarterPlayer/StarterPlayerScripts/Views/Menus.lua
+StarterPlayer/StarterPlayerScripts/Views/Camp.lua
+StarterPlayer/StarterPlayerScripts/Views/Combat.lua
+StarterPlayer/StarterPlayerScripts/Views/Class.lua
 ```
+
+## Suggested Studio smoke test
+
+1. Info > Back > Play > choose a different class/race/trait > preview updates > Begin Adventure.
+2. Camp > Inventory > Crafting > Skills > Class ability > Adventure. Confirm bottom nav remains useful and character stats stay visible.
+3. Map > select a red Combat node; verify enemy and turn queue/scroll log.
+4. Combat > Skills > Guard > enemy turn; Skills > class ability; Items > potion; Attack; Escape (success/failure).
+5. Win another encounter to check rewards and optional level-up choices, then Continue to Camp.
+6. Try Hunter trophies/trap/bounty, Warrior's randomized skill tree and Paladin's unlimited blessing stacking.
+7. Check View > Output and test at multiple resolutions.

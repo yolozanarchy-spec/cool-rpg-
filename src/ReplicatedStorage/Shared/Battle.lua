@@ -14,7 +14,7 @@ local function aliveCount(b)
 end
 local function addLog(b,text)
  table.insert(b.log,1,text)
- if #b.log>8 then table.remove(b.log) end
+ if #b.log>120 then table.remove(b.log) end
 end
 local function status(enemy,name,turns)
  enemy.status[name]=math.max(enemy.status[name] or 0,turns)
@@ -165,16 +165,24 @@ local function tick(run,b)
 end
 function B.Action(run,action,index,skillName)
  local b=run.combat;if not b or run.hp<=0 then return false,"No battle" end
- if not table.find({"Attack","Skill","Defend","Item"},action) then return false,"Invalid action" end
+ if not table.find({"Attack","Skill","Defend","Item","Escape"},action) then return false,"Invalid action" end
  local target=b.enemies[index] or living(b)
- if action~="Defend" and action~="Item" and (not target or target.hp<=0) then return false,"Choose a living enemy" end
+ if action~="Defend" and action~="Item" and action~="Escape" and (not target or target.hp<=0) then return false,"Choose a living enemy" end
  b.guard=false
- if action=="Attack" then
+ if action=="Escape" then
+  if b.battleKind=="Boss" then return false,"You cannot escape a boss battle" end
+  if math.random()<.70 then addLog(b,"You escaped safely!");return true,"Escaped" end
+  addLog(b,"Escape failed! Enemies advance.")
+ elseif action=="Attack" then
   local s=Progress.Stats(run)
   hurtEnemy(run,b,target,(7+s.Strength*1.8)*(1+(b.cry and b.cry.power or 0))*(run.flags.Berserker and 1.3 or 1)*Progress.TrophyBonus(run),false)
  elseif action=="Skill" then
-  if not table.find(Content.BaseSkills[run.class],skillName) then return false,"Unknown skill" end
-  if not skill(run,b,target,skillName) then return false,"Skill unavailable: cooldown, mana, or gold" end
+  if skillName=="Guard" then
+   b.guard=true;b.barrier+=3;addLog(b,"Guard protects you with a barrier")
+  else
+   if not table.find(Content.BaseSkills[run.class],skillName) then return false,"Unknown skill" end
+   if not skill(run,b,target,skillName) then return false,"Skill unavailable: cooldown, mana, or gold" end
+  end
  elseif action=="Defend" then b.guard=true;b.barrier+=3;addLog(b,"You brace for impact")
  elseif action=="Item" then
   if not Content.Items[skillName] or Content.Items[skillName].kind~="Consumable" or (run.inventory[skillName] or 0)<1 then return false,"Item unavailable" end

@@ -158,7 +158,7 @@ local function aliveCount(b)
 end
 local function addLog(b,text)
  table.insert(b.log,1,text)
- if #b.log>8 then table.remove(b.log) end
+ if #b.log>120 then table.remove(b.log) end
 end
 local function status(enemy,name,turns)
  enemy.status[name]=math.max(enemy.status[name] or 0,turns)
@@ -309,16 +309,24 @@ local function tick(run,b)
 end
 function B.Action(run,action,index,skillName)
  local b=run.combat;if not b or run.hp<=0 then return false,"No battle" end
- if not table.find({"Attack","Skill","Defend","Item"},action) then return false,"Invalid action" end
+ if not table.find({"Attack","Skill","Defend","Item","Escape"},action) then return false,"Invalid action" end
  local target=b.enemies[index] or living(b)
- if action~="Defend" and action~="Item" and (not target or target.hp<=0) then return false,"Choose a living enemy" end
+ if action~="Defend" and action~="Item" and action~="Escape" and (not target or target.hp<=0) then return false,"Choose a living enemy" end
  b.guard=false
- if action=="Attack" then
+ if action=="Escape" then
+  if b.battleKind=="Boss" then return false,"You cannot escape a boss battle" end
+  if math.random()<.70 then addLog(b,"You escaped safely!");return true,"Escaped" end
+  addLog(b,"Escape failed! Enemies advance.")
+ elseif action=="Attack" then
   local s=Progress.Stats(run)
   hurtEnemy(run,b,target,(7+s.Strength*1.8)*(1+(b.cry and b.cry.power or 0))*(run.flags.Berserker and 1.3 or 1)*Progress.TrophyBonus(run),false)
  elseif action=="Skill" then
-  if not table.find(Content.BaseSkills[run.class],skillName) then return false,"Unknown skill" end
-  if not skill(run,b,target,skillName) then return false,"Skill unavailable: cooldown, mana, or gold" end
+  if skillName=="Guard" then
+   b.guard=true;b.barrier+=3;addLog(b,"Guard protects you with a barrier")
+  else
+   if not table.find(Content.BaseSkills[run.class],skillName) then return false,"Unknown skill" end
+   if not skill(run,b,target,skillName) then return false,"Skill unavailable: cooldown, mana, or gold" end
+  end
  elseif action=="Defend" then b.guard=true;b.barrier+=3;addLog(b,"You brace for impact")
  elseif action=="Item" then
   if not Content.Items[skillName] or Content.Items[skillName].kind~="Consumable" or (run.inventory[skillName] or 0)<1 then return false,"Item unavailable" end
@@ -827,7 +835,8 @@ local function handle(ctx,op,p)
  local r=ctx.run
  if op=="Poll" then return end
  if op=="Play" and phase=="Menu" then ctx.phase="Creation";return end
- if op=="Info" and (phase=="Menu" or phase=="Camp") then ctx.info= p and p.kind or "Info";ctx.beforeInfo=phase;ctx.phase="Info";return end
+ if op=="BackCreation" and phase=="Creation" then ctx.phase="Menu";return end
+ if op=="Info" and phase~="Info" then ctx.info= p and p.kind or "Info";ctx.beforeInfo=phase;ctx.phase="Info";return end
  if op=="BackInfo" and phase=="Info" then ctx.phase=ctx.beforeInfo or "Menu";return end
  if op=="Confirm" and phase=="Creation" then
   if typeof(p)~="table" or not contains(Content.Races,p.race) or not contains(Content.Classes,p.class) or not contains(Content.Traits,p.trait) then return note(ctx,"Invalid character") end
@@ -837,7 +846,7 @@ local function handle(ctx,op,p)
   return
  end
  if not r then return end
- if op=="CampTab" and phase=="Camp" then
+ if op=="CampTab" and (table.find({"Camp","Inventory","Crafting","Skills","Class","Stats","Codex"},phase) or (phase=="Merchant" and not ctx.shopEvent)) then
   local t=p and p.tab
   if t=="Map" then ctx.phase="Map"
   elseif table.find({"Inventory","Crafting","Skills","Class","Stats","Codex"},t) then ctx.phase=t
@@ -863,7 +872,8 @@ local function handle(ctx,op,p)
   local ok,outcome=Battle.Action(r,p.action,p.index,p.skill)
   if not ok then return note(ctx,outcome) end
   if outcome=="Victory" then rewardCombat(ctx)
-  elseif outcome=="Defeat" then ctx.phase="Death";r.combat=nil end
+  elseif outcome=="Defeat" then ctx.phase="Death";r.combat=nil
+  elseif outcome=="Escaped" then r.combat=nil;enterReward(ctx,"You escaped the encounter without rewards.",{}) end
   return
  end
  if op=="Upgrade" and phase=="Reward" and not ctx.reward.selected then
@@ -977,370 +987,704 @@ Players.PlayerRemoving:Connect(function(player) sessions[player]=nil;lastCall[pl
         <Properties>
           <string name="Name">UI</string>
           <ProtectedString name="Source"><![CDATA[--!strict
--- Responsive 2D menu-driven RPG interface; no external images or plugins needed.
-local ReplicatedStorage=game:GetService("ReplicatedStorage")
+-- Cool RPG 0.2: references the yolo game.pdf UI diagrams, no external assets.
 local Players=game:GetService("Players")
+local ReplicatedStorage=game:GetService("ReplicatedStorage")
 local remote=ReplicatedStorage:WaitForChild("RPGRequest")
-local Shared=ReplicatedStorage:WaitForChild("Shared")
-local Content=require(Shared:WaitForChild("Content"))
-local player=Players.LocalPlayer
-local gui=Instance.new("ScreenGui")
-gui.Name="CoolRPG";gui.ResetOnSpawn=false;gui.IgnoreGuiInset=true;gui.DisplayOrder=10
--- Parent to PlayerGui so Roblox generates and maintains the complete UI.
-gui.Parent=player:WaitForChild("PlayerGui")
-local COLOR={bg=Color3.fromRGB(16,18,24),panel=Color3.fromRGB(29,33,43),raised=Color3.fromRGB(41,46,59),
- border=Color3.fromRGB(66,75,92),text=Color3.fromRGB(234,238,246),sub=Color3.fromRGB(167,177,198),
- gold=Color3.fromRGB(231,189,103),green=Color3.fromRGB(113,205,152),red=Color3.fromRGB(232,118,123),blue=Color3.fromRGB(107,165,237),purple=Color3.fromRGB(174,137,229)}
-local state={phase="Menu"}
+local Content=require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Content"))
+local Views=script.Parent:WaitForChild("Views")
+local T=require(Views:WaitForChild("Kit"))
+local Menus=require(Views:WaitForChild("Menus"))
+local Camp=require(Views:WaitForChild("Camp"))
+local Combat=require(Views:WaitForChild("Combat"))
+local Class=require(Views:WaitForChild("Class"))
+local gui=T.make("ScreenGui",Players.LocalPlayer:WaitForChild("PlayerGui"),{
+ Name="CoolRPG",ResetOnSpawn=false,IgnoreGuiInset=true,DisplayOrder=10})
+local canvas=T.rect(gui,0,0,1280,720,T.c.bg,0,false)
+canvas.AnchorPoint=Vector2.new(.5,.5)
+canvas.Position=UDim2.fromScale(.5,.5)
+T.make("UIGradient",canvas,{Rotation=20,Color=ColorSequence.new({
+ ColorSequenceKeypoint.new(0,Color3.fromRGB(13,18,31)),
+ ColorSequenceKeypoint.new(1,Color3.fromRGB(34,27,45))})})
+local scale=T.make("UIScale",canvas,{Scale=1})
+local function resize()
+ local camera=workspace.CurrentCamera
+ if not camera then return end
+ scale.Scale=math.min(camera.ViewportSize.X/1280,camera.ViewportSize.Y/720)
+end
+resize()
+if workspace.CurrentCamera then workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(resize) end
+local main=T.rect(canvas,0,0,1280,720,T.c.bg,1,false)
+local current={phase="Menu"}
 local choice={race="Human",class="Warrior",trait="Balanced"}
-local target=1
 local draft={area=false,element="Fire",effect="None"}
+local localState={target=1,combatTab="Actions"}
 local busy=false
-local function instance(class,properties,parent)
- local o=Instance.new(class) for k,v in pairs(properties or {}) do o[k]=v end
- o.Parent=parent;return o
-end
-local function round(obj,r)
- instance("UICorner",{CornerRadius=UDim.new(0,r or 10)},obj)
-end
-local function outline(obj)
- instance("UIStroke",{Color=COLOR.border,Transparency=.35,Thickness=1},obj)
-end
-local root=instance("Frame",{Size=UDim2.fromScale(1,1),BackgroundColor3=COLOR.bg,BorderSizePixel=0},gui)
-local backdrop=instance("Frame",{Size=UDim2.fromScale(1,1),BackgroundColor3=COLOR.bg,BorderSizePixel=0},root)
-instance("UIGradient",{Rotation=30,Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(17,21,30)),ColorSequenceKeypoint.new(1,Color3.fromRGB(30,26,43))})},backdrop)
-local shell=instance("Frame",{Size=UDim2.new(1,-30,1,-26),Position=UDim2.new(0,15,0,13),BackgroundColor3=COLOR.panel,BorderSizePixel=0},root)
-round(shell,16);outline(shell)
-local header=instance("Frame",{Size=UDim2.new(1,-32,0,84),Position=UDim2.fromOffset(16,12),BackgroundColor3=COLOR.raised,BorderSizePixel=0},shell)
-round(header,11)
-local heading=instance("TextLabel",{Size=UDim2.new(1,-26,0,36),Position=UDim2.fromOffset(13,8),BackgroundTransparency=1,Text="COOL RPG",Font=Enum.Font.GothamBold,TextSize=26,TextColor3=COLOR.gold,TextXAlignment=Enum.TextXAlignment.Left},header)
-local subtitle=instance("TextLabel",{Size=UDim2.new(1,-26,0,27),Position=UDim2.fromOffset(13,43),BackgroundTransparency=1,Text="A dark fantasy roguelike adventure",Font=Enum.Font.Gotham,TextSize=14,TextColor3=COLOR.sub,TextXAlignment=Enum.TextXAlignment.Left,TextTruncate=Enum.TextTruncate.AtEnd},header)
-local scroll=instance("ScrollingFrame",{Size=UDim2.new(1,-34,1,-155),Position=UDim2.fromOffset(17,104),BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=5,ScrollBarImageColor3=COLOR.gold,CanvasSize=UDim2.fromOffset(0,0),AutomaticCanvasSize=Enum.AutomaticSize.Y,ScrollingDirection=Enum.ScrollingDirection.Y},shell)
-instance("UIListLayout",{Padding=UDim.new(0,10),SortOrder=Enum.SortOrder.LayoutOrder},scroll)
-instance("UIPadding",{PaddingTop=UDim.new(0,6),PaddingBottom=UDim.new(0,12),PaddingLeft=UDim.new(0,2),PaddingRight=UDim.new(0,8)},scroll)
-local footer=instance("TextLabel",{Size=UDim2.new(1,-35,0,36),Position=UDim2.new(0,18,1,-42),BackgroundColor3=COLOR.raised,TextColor3=COLOR.sub,Font=Enum.Font.Gotham,TextSize=13,Text="",TextXAlignment=Enum.TextXAlignment.Left,TextTruncate=Enum.TextTruncate.AtEnd},shell)
-round(footer,7);instance("UIPadding",{PaddingLeft=UDim.new(0,12)},footer)
+local render
 local function clear()
- for _,c in ipairs(scroll:GetChildren()) do if c:IsA("GuiObject") then c:Destroy() end end
- scroll.CanvasPosition=Vector2.new(0,0)
+ for _,obj in ipairs(main:GetChildren()) do obj:Destroy() end
 end
-local function txt(value,h,color,fontSize,bold)
- local t=instance("TextLabel",{Size=UDim2.new(1,-7,0,h or 32),BackgroundTransparency=1,Text=tostring(value),Font=bold and Enum.Font.GothamBold or Enum.Font.Gotham,TextSize=fontSize or 16,TextColor3=color or COLOR.text,TextXAlignment=Enum.TextXAlignment.Left,TextYAlignment=Enum.TextYAlignment.Center,TextWrapped=true},scroll)
- return t
-end
-local function section(name)
- txt(name,38,COLOR.gold,21,true)
-end
-local function button(label,callback,color,detail)
- local frame=instance("TextButton",{Size=UDim2.new(1,-8,0,detail and 67 or 49),BackgroundColor3=COLOR.raised,Text="",AutoButtonColor=true},scroll)
- round(frame,10);outline(frame)
- local left=instance("Frame",{Size=UDim2.new(0,4,1,-16),Position=UDim2.fromOffset(7,8),BackgroundColor3=color or COLOR.blue,BorderSizePixel=0},frame);round(left,3)
- instance("TextLabel",{Size=UDim2.new(1,-38,0,detail and 32 or 46),Position=UDim2.fromOffset(21,detail and 4 or 2),BackgroundTransparency=1,Text=tostring(label),Font=Enum.Font.GothamSemibold,TextSize=16,TextColor3=COLOR.text,TextXAlignment=Enum.TextXAlignment.Left,TextWrapped=true},frame)
- if detail then instance("TextLabel",{Size=UDim2.new(1,-40,0,27),Position=UDim2.fromOffset(22,36),BackgroundTransparency=1,Text=tostring(detail),Font=Enum.Font.Gotham,TextSize=13,TextColor3=COLOR.sub,TextXAlignment=Enum.TextXAlignment.Left,TextTruncate=Enum.TextTruncate.AtEnd},frame) end
- frame.Activated:Connect(callback)
- return frame
-end
-local function numbers(a)
- local parts={}
- for _,key in ipairs(Content.Stats) do table.insert(parts,key..": "..math.floor(a[key] or 0)) end
- return table.concat(parts,"  •  ")
-end
-local function orderedKeys(d)
- local result={};for k in pairs(d or {}) do table.insert(result,k) end;table.sort(result);return result
-end
-local function call(op,p)
+local function send(op,data)
  if busy then return end
  busy=true
- local ok,result=pcall(function() return remote:InvokeServer(op,p or {}) end)
+ local previous=current.phase
+ local ok,result=pcall(function() return remote:InvokeServer(op,data or {}) end)
  busy=false
- if ok and typeof(result)=="table" then state=result else state.message="Could not contact game server" end
+ if ok and typeof(result)=="table" then
+  current=result
+  if current.phase~=previous then
+   localState.combatTab="Actions"
+   if current.phase=="Combat" then localState.target=1 end
+  end
+ else current.message="Could not reach the server. See Roblox Studio Output." end
+ render()
 end
-local render
-local function send(op,p)
- call(op,p)
- if render then render() end
+render=function()
+ clear()
+ local top=T.rect(main,0,0,1280,66,T.c.panel,0,false)
+ T.rect(top,0,64,1280,2,T.c.gold,.16,false)
+ T.label(top,"◈ COOL RPG",28,8,390,49,{size=26,bold=true,color=T.c.gold})
+ local phase=current.phase or "Menu"
+ local title=({Menu="FANTASY ROGUELIKE",Creation="CREATE YOUR HERO",Camp="CAMPSITE",Map="ADVENTURE MAP",
+  Combat="COMBAT",Event="RANDOM EVENT",Reward="ENCOUNTER REWARDS",Inventory="INVENTORY",Crafting="CRAFTING",
+  Skills="SKILLS",Class="CLASS ABILITY",Merchant="SHOP",Stats="CHARACTER INFO",Codex="CODEX",
+  Info="INFORMATION",Victory="VICTORY",Death="DEFEAT"})[phase] or phase:upper()
+ T.label(top,title,407,9,464,46,{size=16,bold=true,align=Enum.TextXAlignment.Center,color=T.c.white})
+ if phase~="Info" and phase~="Menu" and phase~="Creation" then
+  T.button(top,"SETTINGS",1127,12,135,39,function() send("Info",{kind="Settings"}) end,T.c.mute)
+ end
+ local view={root=main,state=current,send=send,redraw=render,choice=choice,draft=draft,
+  localState=localState,content=Content}
+ if phase=="Menu" then Menus.Menu(view)
+ elseif phase=="Creation" then Menus.Creation(view)
+ elseif phase=="Camp" then Camp.Camp(view)
+ elseif phase=="Map" then Camp.Map(view)
+ elseif phase=="Combat" then Combat.Show(view)
+ elseif phase=="Event" then Menus.Event(view)
+ elseif phase=="Reward" then Menus.Reward(view)
+ elseif phase=="Inventory" then Camp.Inventory(view)
+ elseif phase=="Crafting" then Camp.Crafting(view)
+ elseif phase=="Skills" then Camp.Skills(view)
+ elseif phase=="Class" then Class.Show(view)
+ elseif phase=="Stats" then Camp.Stats(view)
+ elseif phase=="Codex" then Camp.Codex(view)
+ elseif phase=="Merchant" then Camp.Merchant(view)
+ elseif phase=="Info" then Menus.Info(view)
+ elseif phase=="Victory" or phase=="Death" then Menus.Finale(view)
+ end
+ local bottom=T.rect(main,0,690,1280,30,T.c.panel,.03,false)
+ T.label(bottom,(current.message and current.message~="" and current.message) or "COOL RPG   •   2D TURN-BASED ROGUELIKE   •   UI 0.2",22,0,1210,30,{size=12,color=T.c.mute,truncate=true})
 end
-local function back()
- button("← Back to campsite",function() send("BackCamp") end,COLOR.sub)
+local ok,result=pcall(function() return remote:InvokeServer("Poll") end)
+if ok and typeof(result)=="table" then current=result end
+render()
+]]></ProtectedString>
+        </Properties>
+      </Item>
+      <Item class="Folder" referent="RBX00000016">
+        <Properties>
+          <string name="Name">Views</string>
+        </Properties>
+        <Item class="ModuleScript" referent="RBX00000017">
+          <Properties>
+            <string name="Name">Camp</string>
+            <ProtectedString name="Source"><![CDATA[--!strict
+-- Campsite layout + persistent bottom dock + adventure map and utility screens.
+local T=require(script.Parent.Kit)
+local C={};local k=T.c
+local function dock(v,selected)
+ local entries={{"ADVENTURE","Map",k.gold},{"INVENTORY","Inventory",k.blue},
+  {"CRAFTING","Crafting",k.green},{"SKILLS","Skills",k.purple},{"CLASS ABILITY","Class",k.gold}}
+ for i,e in ipairs(entries) do
+  T.button(v.root,e[1],32+(i-1)*184,610,172,44,function() v.send("CampTab",{tab=e[2]}) end,e[3],selected==e[2])
+ end
+ T.button(v.root,"STATS / CODEX",961,610,285,44,function() v.send("CampTab",{tab="Stats"}) end,k.mute,selected=="Stats")
 end
-local function itemCount(r,name) return (r.inventory and r.inventory[name]) or 0 end
-local function helpStat(r)
- txt("Level "..r.level.."   •   HP "..r.hp.."/"..r.stats.MaxHP.."   •   MP "..r.mp.."/"..r.stats.MaxMP.."   •   "..r.gold.." gold",38,COLOR.green,17,true)
- txt(numbers(r.stats),69,COLOR.sub,14)
+local function left(v,title)
+ T.subtitle(v.root,"CAMPSITE  /  "..title,32,81,850)
+ local panel=T.panel(v.root,32,124,905,469,title,k.gold)
+ T.sheet(v.root,v.state.run,v.state.stats,961,101,285,492)
+ dock(v,v.state.phase=="Camp" and nil or v.state.phase)
+ return panel
 end
-local function showCreation()
- section("CREATE YOUR CHARACTER")
- txt("Choose your race, class, and trait. They affect starting stats and your unique campsite ability.",54,COLOR.sub)
- for _,field in ipairs({"race","class","trait"}) do
-  txt(string.upper(field).." — "..choice[field],38,COLOR.gold,17,true)
-  local values=field=="race" and Content.Races or (field=="class" and Content.Classes or Content.Traits)
-  for _,name in ipairs(orderedKeys(values)) do
-   local desc=field=="class" and values[name] or values[name].description
-   button((choice[field]==name and "● " or "○ ")..name,function() choice[field]=name;render() end,choice[field]==name and COLOR.gold or COLOR.blue,desc)
+local function listPanel(panel)
+ return T.scroll(panel,22,62,860,382)
+end
+function C.Camp(v)
+ local panel=left(v,"YOUR SAFE HAVEN")
+ T.label(panel,"THE FIRE IS STILL BURNING",30,71,815,48,{size=24,bold=true,color=k.gold})
+ T.label(panel,"The campsite is your home between encounters. Check your equipment, craft supplies, study your skills and develop your unique class ability before entering the next node.",30,137,795,111,{size=18,color=k.mute})
+ T.label(panel,"Choose a destination using the five buttons along the bottom of the screen.",30,287,808,57,{size=17,color=k.green})
+ T.button(panel,"OPEN ADVENTURE MAP →",30,385,320,51,function() v.send("CampTab",{tab="Map"}) end,k.gold)
+end
+function C.Inventory(v)
+ local r=v.state.run;local panel=left(v,"INVENTORY & EQUIPMENT");local sc=listPanel(panel)
+ T.copy(sc,"EQUIPPED  •  "..table.concat({"Weapon: "..(r.equipment.Weapon or "None"),"Shield: "..(r.equipment.Shield or "None"),"Armor: "..(r.equipment.Armor or "None"),"Ring: "..(r.equipment.Ring or "None")},"    /    "),66,k.gold)
+ for _,name in ipairs(T.keys(r.inventory)) do
+  local item=v.content.Items[name]
+  if item then
+   local detail=item.kind..(item.stat and "   +"..item.bonus.." "..item.stat or "").."    x"..r.inventory[name]
+   local action=nil
+   if item.kind=="Consumable" then action=function() v.send("UseItem",{name=name}) end end
+   if table.find({"Weapon","Shield","Armor","Ring"},item.kind) then action=function() v.send("Equip",{name=name}) end end
+   T.entry(sc,name..(action and "  •  CLICK TO USE / EQUIP" or ""),detail,action,item.kind=="Consumable" and k.green or k.blue,60)
   end
  end
- button("START ADVENTURE →",function() send("Confirm",choice) end,COLOR.green)
 end
-local function showMenu()
- section("A WORLD OF CHOICES")
- txt("Build a hero. Explore branching paths. Survive strategic turn-based battles. Grow stronger—or lose your run.",68,COLOR.sub)
- button("PLAY",function() send("Play") end,COLOR.gold,"Begin a single-player roguelike run")
- button("MULTIPLAYER",function() send("Info",{kind="Multiplayer"}) end,COLOR.purple,"Party play is planned but is not yet playable")
- button("ACHIEVEMENTS",function() send("Info",{kind="Achievements"}) end,COLOR.blue)
- button("INFO / CODEX",function() send("Info",{kind="Info"}) end,COLOR.blue)
- button("SETTINGS",function() send("Info",{kind="Settings"}) end,COLOR.sub)
+function C.Crafting(v)
+ local r=v.state.run;local panel=left(v,"CRAFTING BENCH");local sc=listPanel(panel)
+ T.copy(sc,"Recipes appear when you collect at least one required ingredient. The server checks all ingredients before crafting.",61,k.mute)
+ local n=0
+ for _,recipe in ipairs(v.content.Recipes) do
+  local found=false;local need={}
+  for name,count in pairs(recipe.need) do
+   local have=r.inventory[name] or 0
+   if have>0 then found=true end
+   table.insert(need,name.." "..have.."/"..count)
+  end
+  if found then n+=1;T.entry(sc,"CRAFT  "..recipe.name,table.concat(need,"    •    "),function() v.send("Craft",{name=recipe.name}) end,k.gold,67) end
+ end
+ if n==0 then T.copy(sc,"No recipes discovered. Collect materials through combat and random events.",65,k.mute) end
 end
-local function showCamp(r)
- section("CAMPSITE • PREPARE FOR YOUR NEXT JOURNEY")
- helpStat(r)
- button("ADVENTURE MAP",function() send("CampTab",{tab="Map"}) end,COLOR.gold,"Choose one connected node to advance the run")
- button("INVENTORY & EQUIPMENT",function() send("CampTab",{tab="Inventory"}) end,COLOR.blue)
- button("CRAFTING",function() send("CampTab",{tab="Crafting"}) end,COLOR.blue)
- button("SKILLS",function() send("CampTab",{tab="Skills"}) end,COLOR.blue)
- button("CLASS ABILITY — "..r.class,function() send("CampTab",{tab="Class"}) end,COLOR.purple,Content.Classes[r.class])
- button("CHARACTER STATS",function() send("CampTab",{tab="Stats"}) end,COLOR.sub)
- button("CODEX / TROPHY RECORDS",function() send("CampTab",{tab="Codex"}) end,COLOR.sub)
- txt("Runs cannot be restarted from camp. Defeat the final boss or fall in battle to begin again.",49,COLOR.sub,13)
+function C.Skills(v)
+ local r=v.state.run;local panel=left(v,"SKILL COMPENDIUM");local sc=listPanel(panel)
+ T.copy(sc,"These skills appear on the combat action panel. Select SKILLS to scroll through them. Guard is available to every class.",63,k.mute)
+ T.entry(sc,"Guard","Universal defensive skill: halve the next enemy attacks and gain 3 Barrier.",nil,k.green,72)
+ for _,name in ipairs(v.content.BaseSkills[r.class]) do
+  local desc=name=="Crafted Spell" and (r.spell.name.."   •   "..r.spell.points.." points") or "Class ability • available in battle when its cooldown and resource requirements permit"
+  T.entry(sc,name,desc,nil,k.purple,70)
+ end
 end
-local function showMap(map)
- section("BRANCHING ADVENTURE MAP")
- txt("Choose one reachable node in row "..map.row.."/10. The tenth row contains the boss.",54,COLOR.sub)
- local colors={Combat=COLOR.red,Event=COLOR.sub,Merchant=COLOR.blue,Rest=COLOR.green,Special=COLOR.purple,Boss=COLOR.gold}
- for i,node in ipairs(map.rows[map.row] or {}) do
-  local accessible=table.find(map.available,i)~=nil
-  button((accessible and "◆ " or "◇ ").."Path "..i..": "..node.kind,function() if accessible then send("ChooseNode",{index=i}) end end,accessible and colors[node.kind] or COLOR.border,accessible and "AVAILABLE — select this encounter" or "NOT CONNECTED — unavailable")
- end
- for row=map.row+1,math.min(10,map.row+3) do
-  local parts={};for _,n in ipairs(map.rows[row]) do table.insert(parts,n.kind) end
-  txt("UPCOMING ROW "..row.."  •  "..table.concat(parts," / "),31,COLOR.sub,14)
- end
- back()
+function C.Stats(v)
+ local r=v.state.run;local panel=left(v,"CHARACTER RECORD");local sc=listPanel(panel)
+ T.copy(sc,r.race.."  /  "..r.class.."  /  "..r.trait.."     •     "..r.kills.." monsters defeated     •     "..r.bosses.." bosses",48,k.gold)
+ for _,field in ipairs(v.content.Stats) do T.copy(sc,field.."   "..tostring(v.state.stats[field] or 0),34,k.white) end
+ T.copy(sc,"ACTIVE BLESSINGS",36,k.gold)
+ for _,name in ipairs(T.keys(r.blessings)) do T.copy(sc,name.."  ×"..r.blessings[name],30,k.green) end
+ T.copy(sc,"ACTIVE CURSES",36,k.red)
+ for _,name in ipairs(T.keys(r.curses)) do T.copy(sc,name.."  ×"..r.curses[name],30,k.red) end
+ T.button(panel,"VIEW CODEX",656,17,214,33,function() v.send("CampTab",{tab="Codex"}) end,k.blue)
 end
-local function showCombat(r)
- local b=r.combat
- section(b.battleKind=="Boss" and "BOSS BATTLE" or "TURN-BASED COMBAT")
- helpStat(r)
- txt("TURN "..b.round.."   •   BARRIER "..b.barrier.."   •   Select enemy below, then take an action.",35,COLOR.gold)
- for i,e in ipairs(b.enemies) do
-  local label=(target==i and "▶ " or "  ")..e.name.." • Lv "..e.level.."    "..e.hp.."/"..e.maxHP.." HP"
-  local effects={};for n,duration in pairs(e.status) do if duration>0 then table.insert(effects,n.."("..duration..")") end end
-  button(label,function() target=i;render() end,e.hp<=0 and COLOR.border or (target==i and COLOR.gold or COLOR.red),e.hp<=0 and "DEFEATED" or ("DEF "..e.defense.."   "..table.concat(effects,", ")))
+function C.Codex(v)
+ local r=v.state.run;local panel=left(v,"CODEX & RECORDS");local sc=listPanel(panel)
+ T.copy(sc,"Discover your enemies, items and class mechanics as you explore. Full persistent discovery tracking is planned.",74,k.mute)
+ T.copy(sc,"COMBATS WON: "..r.wins,40,k.gold)
+ T.copy(sc,"ENEMIES DEFEATED: "..r.kills,40,k.gold)
+ if r.class=="Hunter" then
+  T.copy(sc,"TROPHIES: "..r.trophyTotal,38,k.green)
+  for _,n in ipairs(T.keys(r.trophies)) do T.copy(sc,n.."  ×"..r.trophies[n],32) end
  end
- section("CHOOSE AN ACTION")
- button("ATTACK",function() send("CombatAction",{action="Attack",index=target}) end,COLOR.red,"A physical attack that scales with Strength")
- for _,name in ipairs(Content.BaseSkills[r.class]) do
-  local cd=b.cooldowns[name] or 0
-  local detail=(cd>0 and ("Cooldown: "..cd.." turns") or "Ready if you have enough MP")
-  if name=="Crafted Spell" then detail=r.spell.name.." • "..r.spell.points.." points • "..detail end
-  button("SKILL • "..name,function() send("CombatAction",{action="Skill",index=target,skill=name}) end,cd>0 and COLOR.border or COLOR.purple,detail)
- end
- button("DEFEND",function() send("CombatAction",{action="Defend"}) end,COLOR.green,"Halve the next enemy attacks and gain 3 barrier")
- for _,name in ipairs({"Health Potion","Major Health Potion","Mana Potion","Antidote"}) do
-  if itemCount(r,name)>0 then button("USE "..name.." ×"..itemCount(r,name),function() send("CombatAction",{action="Item",skill=name}) end,COLOR.blue) end
- end
- section("BATTLE LOG")
- for _,line in ipairs(b.log) do txt("• "..line,31,COLOR.sub,14) end
 end
-local function showReward(reward)
- section("ENCOUNTER COMPLETE")
- txt(reward.summary,60,COLOR.green,18,true)
- txt("+"..reward.gold.." gold    +"..reward.xp.." experience",41,COLOR.gold,17)
- if reward.item~="" then txt("LOOT  •  "..reward.item,42,COLOR.blue) end
- if reward.levelUps>0 then
-  section("LEVEL UP! CHOOSE ONE UPGRADE")
-  for _,u in ipairs(reward.choices) do
-   button((reward.selected and "✓ " or "◆ ")..u.name,function() if not reward.selected then send("Upgrade",{name=u.name}) end end,reward.selected and COLOR.sub or COLOR.gold,u.desc)
+function C.Merchant(v)
+ local s=v.state;local r=s.run;local panel=left(v,"MERCHANT SHOP");local sc=listPanel(panel)
+ T.copy(sc,"Available gold: "..r.gold.."      Mana: "..r.mp,40,k.gold)
+ for i,item in ipairs(s.shop or {}) do
+  T.entry(sc,item.name.."    "..item.price.." GOLD",v.content.Items[item.name].kind,function() v.send("Buy",{index=i}) end,k.blue,63)
+ end
+ if r.class=="Merchant" then T.entry(sc,"REFRESH STOCK","Costs 20 MP to refresh the personal shop.",function() v.send("RefreshShop") end,k.purple,69) end
+ T.button(panel,"← RETURN TO CAMP",648,17,217,33,function() v.send("BackCamp") end,k.mute)
+end
+local shades={Combat=k.red,Event=k.mute,Merchant=k.blue,Rest=k.green,Special=k.purple,Boss=k.blue}
+local function linkLine(parent,ax,ay,bx,by,color)
+ local dx=bx-ax;local dy=by-ay
+ local f=T.rect(parent,(ax+bx)/2,(ay+by)/2,math.sqrt(dx*dx+dy*dy),2,color,.4,false)
+ f.AnchorPoint=Vector2.new(.5,.5)
+ f.Rotation=math.deg(math.atan2(dy,dx))
+end
+function C.Map(v)
+ local map=v.state.map;local p=v.root
+ T.subtitle(p,"ADVENTURE MAP",36,80,600)
+ T.label(p,"Select an available connected node. Completing it returns you to camp.",38,111,1050,26,{size=14,color=k.mute})
+ local board=T.panel(p,33,150,1215,470,nil)
+ T.label(board,"PATH LEGEND",23,22,240,27,{size=16,bold=true,color=k.gold})
+ for i,l in ipairs({{"ENEMIES",k.red},{"BOSS",k.blue},{"EVENTS",k.mute},{"MERCHANT",k.blue},{"REST",k.green},{"SPECIAL",k.purple}}) do
+  T.rect(board,26,62+(i-1)*41,14,14,l[2],0,3)
+  T.label(board,l[1],53,52+(i-1)*41,190,34,{size=14})
+ end
+ T.label(board,"CURRENT ROW  "..map.row.." / 10",28,358,210,29,{size=15,bold=true,color=k.gold})
+ local tx={418,639,860}
+ local function nodeX(col) return tx[col] or 639 end
+ local function nodeY(row) return 420-(row-1)*43 end
+ for row=1,9 do
+  for _,node in ipairs(map.rows[row]) do
+   for _,to in ipairs(node.links) do
+    linkLine(board,nodeX(node.col),nodeY(row),nodeX(to),nodeY(row+1),k.border)
+   end
   end
  end
- if reward.selected then button("RETURN TO CAMP →",function() send("Continue") end,COLOR.green) else txt("Select an upgrade to continue.",38,COLOR.sub) end
-end
-local function showEvent(s)
- section("ENCOUNTER • "..s.eventName)
- txt("Your choices can lead to treasure, a blessing, a curse, training, or an unexpected battle.",55,COLOR.sub)
- for _,option in ipairs(s.eventChoices or {}) do button(option.label,function() send("EventChoice",{choice=option.id}) end,COLOR.purple) end
-end
-local function showInventory(r)
- section("INVENTORY & EQUIPMENT")
- helpStat(r)
- for _,slot in ipairs({"Weapon","Shield","Armor","Ring"}) do txt(slot..": "..(r.equipment[slot] or "Empty"),34,COLOR.gold) end
- for _,name in ipairs(orderedKeys(r.inventory)) do
-  local item=Content.Items[name]
-  local description=item.kind..(item.stat and "  •  +"..item.bonus.." "..item.stat or "")
-  if item.kind=="Consumable" then
-   button(name.." ×"..r.inventory[name].."  • USE",function() send("UseItem",{name=name}) end,COLOR.green,description)
-  elseif table.find({"Weapon","Shield","Armor","Ring"},item.kind) then
-   button(name.." ×"..r.inventory[name].."  • EQUIP",function() send("Equip",{name=name}) end,COLOR.blue,description)
-  else txt("• "..name.." ×"..r.inventory[name].."  ("..description..")",34,COLOR.sub,15) end
- end
- back()
-end
-local function showCrafting(r)
- section("CRAFTING BENCH")
- txt("Recipes appear when you have at least one of their ingredients. Crafting uses your materials.",55,COLOR.sub)
- local visible=0
- for _,recipe in ipairs(Content.Recipes) do
-  local unlocked=false;local parts={}
-  for ingredient,amount in pairs(recipe.need) do
-   local have=itemCount(r,ingredient)
-   if have>0 then unlocked=true end
-   table.insert(parts,ingredient.." "..have.."/"..amount)
-  end
-  if unlocked then
-   visible+=1
-   button("CRAFT "..recipe.name,function() send("Craft",{name=recipe.name}) end,COLOR.gold,table.concat(parts,"    •    "))
+ local visited={}
+ for _,h in ipairs(map.history or {}) do visited[h.row.."-"..h.col]=true end
+ for row=1,10 do
+  for _,node in ipairs(map.rows[row]) do
+   local can=row==map.row and table.find(map.available,node.col)~=nil
+   local done=visited[row.."-"..node.col]
+   local current=row==map.row
+   local on=can or done
+   local col=on and (shades[node.kind] or k.mute) or k.border
+   local text=(done and "✓ " or can and "◆ " or "◇ ")..node.kind
+   T.button(board,text,nodeX(node.col)-66,nodeY(row)-14,132,30,function()
+    if can then v.send("ChooseNode",{index=node.col}) end
+   end,col,current and can)
   end
  end
- if visible==0 then txt("No recipes discovered. Collect materials on your journey.",55,COLOR.sub) end
- back()
+ T.button(p,"← RETURN TO CAMP",33,635,205,37,function() v.send("BackCamp") end,k.mute)
 end
-local function showSkills(r)
- section("CLASS SKILLS • "..r.class)
- for _,name in ipairs(Content.BaseSkills[r.class]) do txt("◆ "..name,39,COLOR.purple,17,true) end
- txt("Attack and Defend are always available. Skills use cooldowns and some require MP or gold.",55,COLOR.sub)
- if r.class=="Mage" then txt("Current crafted spell: "..r.spell.name.." ("..r.spell.points.." points)",45,COLOR.gold) end
- back()
+C.Left=left
+return C
+]]></ProtectedString>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="RBX00000018">
+          <Properties>
+            <string name="Name">Class</string>
+            <ProtectedString name="Source"><![CDATA[--!strict
+-- The special class screens retain their server-side ability logic.
+local T=require(script.Parent.Kit)
+local Camp=require(script.Parent.Camp)
+local C={};local k=T.c
+local function row(scroll,name,desc,func,color)
+ T.entry(scroll,name,desc,func,color or k.purple,67)
 end
-local function showClass(r)
- section(r.class.." • UNIQUE CLASS ABILITY")
- txt(Content.Classes[r.class],67,COLOR.sub,16)
+function C.Show(v)
+ local r=v.state.run
+ local panel=Camp.Left(v,r.class:upper().."  •  CLASS ABILITY")
+ local sc=T.scroll(panel,21,60,861,380)
+ T.copy(sc,v.content.Classes[r.class],65,k.mute)
  if r.class=="Warrior" then
-  txt("BATTLE CRY SKILL TREE   •   "..r.cryPoints.." available points",50,COLOR.gold,18,true)
-  txt("Each run randomly generates nine nodes. Unlock a node above its predecessor in the same branch.",56,COLOR.sub,14)
+  T.copy(sc,"BATTLE CRY  •  "..r.cryPoints.." skill points available",45,k.gold)
+  T.copy(sc,"Your skill tree is randomly generated on every new run. Unlock each branch from its first tier upward.",60,k.mute)
   for tier=1,3 do
-   txt("TIER "..tier,32,COLOR.gold,16,true)
+   T.copy(sc,"TIER  "..tier,30,k.gold)
    for branch=1,3 do
-    local i=(tier-1)*3+branch;local n=r.cryNodes[i]
-    local unlocked=r.cryOwned[tostring(i)]
-    local canUnlock=not unlocked and r.cryPoints>0 and (tier==1 or r.cryOwned[tostring(i-3)])
-    button((unlocked and "✓ " or (canUnlock and "◇ " or "🔒 "))..n.name,function() if canUnlock then send("CryUnlock",{index=i}) end end,unlocked and COLOR.green or (canUnlock and COLOR.gold or COLOR.border),n.desc)
+    local i=(tier-1)*3+branch;local node=r.cryNodes[i]
+    local owned=r.cryOwned[tostring(i)]
+    local valid=not owned and r.cryPoints>0 and (tier==1 or r.cryOwned[tostring(i-3)])
+    local label=owned and "UNLOCKED  ✓  " or valid and "UNLOCK  •  " or "LOCKED  •  "
+    row(sc,label..node.name,node.desc,function() if valid then v.send("CryUnlock",{index=i}) end end,owned and k.green or valid and k.gold or k.border)
    end
   end
  elseif r.class=="Hunter" then
-  txt("TROPHY CABINET • "..r.trophyTotal.." total trophies",46,COLOR.gold,19,true)
-  txt("Every defeated enemy becomes a trophy. Each trophy grants +0.3% damage, capped at +25%.",58,COLOR.sub)
-  for _,name in ipairs(orderedKeys(r.trophies)) do txt("🏆 "..name.." ×"..r.trophies[name],30,COLOR.green,15) end
-  section("TRAP MAKER • BEFORE EVERY BATTLE")
+  T.copy(sc,"TROPHY DISPLAY  •  "..r.trophyTotal.." trophies",42,k.gold)
+  T.copy(sc,"Every killed monster becomes a trophy. Gain +0.3% damage per trophy, capped at +25%.",54,k.mute)
+  for _,name in ipairs(T.keys(r.trophies)) do T.copy(sc,name.."   ×"..r.trophies[name],30,k.green) end
+  T.copy(sc,"TRAP MAKER  •  PRECOMBAT PREPARATION",43,k.gold)
   for _,name in ipairs({"Spike","Venom","Snare"}) do
-   local desc={Spike="Damage the strongest enemy",Venom="Poison the strongest enemy",Snare="Stun the strongest enemy"}
-   button((r.trap==name and "✓ " or "  ")..name,function() send("Trap",{name=name}) end,r.trap==name and COLOR.green or COLOR.blue,desc[name])
+   local desc={Spike="Deals damage to the strongest enemy",Venom="Poisons the strongest enemy",Snare="Stuns the strongest enemy"}
+   row(sc,(r.trap==name and "SELECTED  •  " or "SET TRAP  •  ")..name,desc[name],function() v.send("Trap",{name=name}) end,r.trap==name and k.green or k.blue)
   end
-  section("BOUNTY BOARD")
-  if r.bounty then txt(r.bounty.kind..": "..r.bounty.progress.."/"..r.bounty.goal.." defeated",44,COLOR.green)
+  T.copy(sc,"BOUNTY BOARD",43,k.gold)
+  if r.bounty then
+   T.copy(sc,r.bounty.kind..":  "..r.bounty.progress.." / "..r.bounty.goal.." targets eliminated",55,k.green)
   else
    for _,kind in ipairs({"Any","Wild","Goblin","Undead"}) do
-    button("ACCEPT "..kind.." bounty",function() send("Bounty",{kind=kind}) end,COLOR.gold,"Kill eligible enemies to receive gold and XP")
+    row(sc,"ACCEPT  "..kind:upper().." BOUNTY","Defeat marked monsters for gold and XP",function() v.send("Bounty",{kind=kind}) end,k.gold)
    end
   end
  elseif r.class=="Paladin" then
-  txt("DIVINE FAVOR • "..(r.charges or 0).." divine charges",49,COLOR.gold,19,true)
-  txt("Paladins can stack blessings without any active blessing limit. Request up to two pending blessings; each activates after several victories and grants a cleansing charge.",78,COLOR.sub)
-  section("ACTIVE BLESSINGS")
-  for _,name in ipairs(orderedKeys(r.blessings)) do txt(name.." ×"..r.blessings[name],33,COLOR.green) end
-  section("PENDING BLESSINGS")
-  for _,p in ipairs(r.pending or {}) do txt(p.name.." • "..p.left.." victories remaining",34,COLOR.gold) end
-  section("REQUEST A BLESSING")
-  for _,name in ipairs(orderedKeys(Content.Blessings)) do
-   button(name,function() send("BlessRequest",{name=name}) end,COLOR.gold,Content.Blessings[name].text)
+  T.copy(sc,"DIVINE FAVOR  •  "..(r.charges or 0).." divine charges",42,k.gold)
+  T.copy(sc,"Paladins have NO active blessing limit and may stack identical blessings. Pending blessings activate after victories; Divine Charges cleanse curses.",75,k.mute)
+  T.copy(sc,"ACTIVE BLESSINGS",34,k.gold)
+  for _,n in ipairs(T.keys(r.blessings)) do T.copy(sc,n.."  ×"..r.blessings[n],30,k.green) end
+  T.copy(sc,"PENDING BLESSINGS  •  MAX 2",34,k.gold)
+  for _,b in ipairs(r.pending or {}) do T.copy(sc,b.name.."  •  "..b.left.." victories left",30,k.mute) end
+  T.copy(sc,"REQUEST BLESSING",38,k.gold)
+  for _,n in ipairs(T.keys(v.content.Blessings)) do
+   row(sc,n,v.content.Blessings[n].text,function() v.send("BlessRequest",{name=n}) end,k.gold)
   end
-  section("CLEANSE CURSES • 1 CHARGE EACH")
-  for _,name in ipairs(orderedKeys(r.curses)) do
-   button("REMOVE "..name.." ×"..r.curses[name],function() send("Cleanse",{name=name}) end,COLOR.red)
-  end
+  T.copy(sc,"CLEANSE A CURSE  •  1 DIVINE CHARGE",40,k.red)
+  for _,n in ipairs(T.keys(r.curses)) do row(sc,"REMOVE  "..n,"Use a Divine Charge to remove one curse stack",function() v.send("Cleanse",{name=n}) end,k.red) end
  elseif r.class=="Mage" then
-  section("CUSTOM SPELL CRAFTER • TEN POINTS")
-  txt("Spell: "..draft.element.." / "..(draft.area and "All Enemies" or "Single Enemy").." / "..draft.effect,50,COLOR.gold)
-  local cost=4+(draft.area and 4 or 0)+(draft.effect~="None" and 2 or 0)
-  txt("Total spell cost: "..cost.."/10 points",34,cost>10 and COLOR.red or COLOR.green)
-  for _,element in ipairs({"Fire","Ice","Arcane"}) do button((draft.element==element and "● " or "○ ")..element,function() draft.element=element;render() end,COLOR.purple) end
-  for _,v in ipairs({false,true}) do button((draft.area==v and "● " or "○ ")..(v and "Hit every enemy (+4)" or "Hit one enemy (+0)"),function() draft.area=v;render() end,COLOR.blue) end
-  for _,effect in ipairs({"None","Poison","Burn"}) do button((draft.effect==effect and "● " or "○ ")..effect,function() draft.effect=effect;render() end,COLOR.blue) end
-  button("CRAFT THIS SPELL",function() send("CraftSpell",draft) end,COLOR.gold)
+  local d=v.draft;local cost=4+(d.area and 4 or 0)+(d.effect~="None" and 2 or 0)
+  T.copy(sc,"CUSTOM SPELL CRAFTER  •  10-POINT LIMIT",47,k.gold)
+  T.copy(sc,d.element.."  /  "..(d.area and "ALL ENEMIES" or "SINGLE ENEMY").."  /  "..d.effect.."    •    "..cost.." / 10 POINTS",62,cost>10 and k.red or k.green)
+  T.copy(sc,"ELEMENT",30,k.gold)
+  for _,el in ipairs({"Fire","Ice","Arcane"}) do
+   row(sc,(d.element==el and "● " or "○ ")..el,"Elemental damage focus",function() d.element=el;v.redraw() end,k.purple)
+  end
+  T.copy(sc,"TARGET TYPE",30,k.gold)
+  for _,opt in ipairs({{false,"One enemy"},{true,"All enemies (+4 points)"}}) do
+   row(sc,(d.area==opt[1] and "● " or "○ ")..opt[2],"Choose how many foes are hit",function() d.area=opt[1];v.redraw() end,k.blue)
+  end
+  T.copy(sc,"ADDITIONAL EFFECT",30,k.gold)
+  for _,name in ipairs({"None","Poison","Burn"}) do
+   row(sc,(d.effect==name and "● " or "○ ")..name,"Additional status effect",function() d.effect=name;v.redraw() end,k.purple)
+  end
+  row(sc,"CRAFT SPELL","Apply your custom spell to combat",function() v.send("CraftSpell",d) end,k.gold)
  elseif r.class=="Necromancer" then
-  section("ZOMBIE WORKSHOP")
-  txt("Equip parts into body slots to improve your ally's HP and attack. The zombie automatically attacks once each combat turn.",62,COLOR.sub)
+  T.copy(sc,"ZOMBIE WORKSHOP",43,k.gold)
+  T.copy(sc,"Equip monster parts in five body slots to build your own undead companion. Your zombie attacks automatically.",64,k.mute)
   for _,slot in ipairs({"Head","Arms","Chest","Legs","Core"}) do
-   txt(slot.." • "..(r.zombieParts[slot] or "Empty"),39,COLOR.gold,16,true)
-   for _,name in ipairs(orderedKeys(r.inventory)) do
-    local item=Content.Items[name]
-    if item.kind=="Part" then
-     button("EQUIP "..name.." ×"..r.inventory[name],function() send("ZombieEquip",{slot=slot,name=name}) end,COLOR.purple,"+"..item.bonus.." "..item.stat)
+   T.copy(sc,slot:upper().."  •  "..(r.zombieParts[slot] or "Empty"),38,k.gold)
+   for _,name in ipairs(T.keys(r.inventory)) do
+    local itm=v.content.Items[name]
+    if itm and itm.kind=="Part" then
+     row(sc,"EQUIP  "..name.."  ×"..r.inventory[name],"+"..itm.bonus.." "..itm.stat,function() v.send("ZombieEquip",{slot=slot,name=name}) end,k.purple)
     end
    end
   end
  elseif r.class=="Merchant" then
-  txt("Purchase equipment and consumables whenever you camp. Store inventory refreshes with 20 MP.",62,COLOR.sub)
-  button("OPEN PERSONAL SHOP",function() send("OpenShop") end,COLOR.gold)
+  T.copy(sc,"MERCHANT'S CARAVAN",44,k.gold)
+  T.copy(sc,"Buy equipment and supplies from your personal campsite shop. Refresh the entire stock for 20 MP.",81,k.mute)
+  row(sc,"OPEN PERSONAL SHOP","Browse items, purchase equipment, and manage your supplies",function() v.send("OpenShop") end,k.gold)
  end
- back()
 end
-local function showMerchant(s)
- section(s.run.class=="Merchant" and "MERCHANT'S CARAVAN" or "TRAVELING MERCHANT")
- txt(s.run.gold.." GOLD   •   "..s.run.mp.." MP",35,COLOR.gold)
- for i,item in ipairs(s.shop or {}) do
-  button(item.name.."  •  "..item.price.." gold",function() send("Buy",{index=i}) end,COLOR.blue,Content.Items[item.name].kind)
- end
- if s.run.class=="Merchant" then button("REFRESH SHOP • 20 MP",function() send("RefreshShop") end,COLOR.purple) end
- back()
-end
-local function showStats(r)
- section("CHARACTER SHEET")
- helpStat(r)
- txt("Race: "..r.race.."    Class: "..r.class.."    Trait: "..r.trait,42,COLOR.gold)
- txt("Level "..r.level.."    XP "..r.xp.."/"..(r.level*35).."    Defeated foes: "..r.kills.."    Combats won: "..r.wins,45,COLOR.sub)
- txt("Bosses defeated: "..r.bosses.."   •  Hunter trophies: "..r.trophyTotal,42,COLOR.sub)
- section("BLESSINGS")
- for _,n in ipairs(orderedKeys(r.blessings)) do txt(n.." ×"..r.blessings[n],32,COLOR.green) end
- section("CURSES")
- for _,n in ipairs(orderedKeys(r.curses)) do txt(n.." ×"..r.curses[n],32,COLOR.red) end
- back()
-end
-local function showInfo(s)
- section(s.info or "INFO")
- if s.info=="Multiplayer" then txt("This build is a single-player vertical slice. Four-player synchronized party combat, summon ownership and party matchmaking are not implemented yet.",93,COLOR.sub)
- elseif s.info=="Achievements" then txt("Achievements and long-run leaderboards are planned. This version tracks kills, boss victories, and trophy counts only for the current run; they are not saved between sessions.",95,COLOR.sub)
- elseif s.info=="Settings" then txt("Visuals use built-in Roblox GUI objects. For now, adjust volume through Roblox's own settings menu. Custom accessibility controls are planned.",78,COLOR.sub)
- else txt("Strength: physical damage. Defense: damage reduction and HP. Speed: evasion. Intelligence: magic and MP. Luck: critical hits. Charisma: economy. Holiness: holy damage and healing. The campsite is your hub between encounters.",150,COLOR.sub) end
- button("← BACK",function() send("BackInfo") end,COLOR.blue)
-end
-render=function()
- clear()
- local s=state;local phase=s.phase or "Menu";local r=s.run
- heading.Text="COOL RPG  /  "..string.upper(phase)
- subtitle.Text=r and (r.race.." "..r.class.." • "..r.trait.." • Floor "..((s.map and math.min(10,s.map.row)) or 1)) or "Fantasy • Choices • Consequences"
- footer.Text=(s.message and s.message~="" and s.message) or "COOL RPG  •  Prototype build 0.1  •  Server-authoritative combat"
- if r then r.stats={};end
- -- Stats are computed on the server and included as a separate field.
- if r and s.stats then r.stats=s.stats end
- if phase=="Menu" then showMenu()
- elseif phase=="Creation" then showCreation()
- elseif phase=="Camp" then showCamp(r)
- elseif phase=="Map" then showMap(s.map)
- elseif phase=="Combat" then showCombat(r)
- elseif phase=="Event" then showEvent(s)
- elseif phase=="Reward" then showReward(s.reward)
- elseif phase=="Inventory" then showInventory(r)
- elseif phase=="Crafting" then showCrafting(r)
- elseif phase=="Skills" then showSkills(r)
- elseif phase=="Class" then showClass(r)
- elseif phase=="Merchant" then showMerchant(s)
- elseif phase=="Stats" or phase=="Codex" then showStats(r)
- elseif phase=="Info" then showInfo(s)
- elseif phase=="Death" then
-  section("YOU HAVE FALLEN")
-  txt("Your journey ended. Enemies defeated: "..r.kills.." • Battles won: "..r.wins,65,COLOR.red)
-  button("BEGIN A NEW RUN",function() send("NewRun") end,COLOR.gold)
- elseif phase=="Victory" then
-  section("VICTORY! THE FINAL BOSS IS DEFEATED")
-  txt("Your adventure is complete. You defeated "..r.kills.." enemies and reached level "..r.level..".",80,COLOR.green)
-  txt("Endless mode is planned but not included in this first build.",56,COLOR.sub)
-  button("BEGIN A NEW RUN",function() send("NewRun") end,COLOR.gold)
- else txt("Unknown UI state: "..phase,60,COLOR.red) end
-end
-local ok,result=pcall(function() return remote:InvokeServer("Poll") end)
-if ok and result then state=result end
-render()
+return C
 ]]></ProtectedString>
-        </Properties>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="RBX00000019">
+          <Properties>
+            <string name="Name">Combat</string>
+            <ProtectedString name="Source"><![CDATA[--!strict
+-- Combat layout follows PDF: turn queue left, enemies center, fixed scroll log right,
+-- bottom 2x2 action buttons, and skills/items replacing the action grid.
+local T=require(script.Parent.Kit)
+local M={};local c=T.c
+local function hpCard(parent,name,now,total,x,y,w,color)
+ T.label(parent,name,x+8,y,w-16,23,{size=14,bold=true})
+ T.label(parent,now.." / "..total.." HP",x+8,y+29,w-16,25,{size=13,color=color})
+ T.progress(parent,x+8,y+60,w-16,9,now,total,color)
+end
+function M.Show(v)
+ local s=v.state;local r=s.run;local b=r.combat;local localView=v.localState
+ if not b then return end
+ local root=v.root
+ T.subtitle(root,b.battleKind=="Boss" and "BOSS COMBAT" or "COMBAT",228,79,620)
+ T.label(root,"STAGE "..(r.stage or 1).."    •    ROUND "..b.round,16,78,182,30,{size=13,bold=true,color=c.gold})
+ local queue=T.panel(root,13,112,181,514,"TURN ORDER",c.gold)
+ T.label(queue,"YOUR TURN",12,52,157,27,{size=13,bold=true,color=c.green})
+ T.button(queue,"01  YOU",12,86,155,46,nil,c.green,true)
+ local y=151
+ for i,e in ipairs(b.enemies) do
+  if e.hp>0 then
+   T.button(queue,string.format("%02d  %s",i+1,e.name),12,y,155,48,function()
+    localView.target=i;v.redraw()
+   end,c.red,localView.target==i)
+   y+=58
+  end
+ end
+ local field=T.panel(root,206,112,782,270,"BATTLEFIELD",c.red)
+ T.label(field,"Select a living enemy, then choose an action.",16,46,750,25,{size=13,color=c.mute})
+ local alive={}
+ for i,e in ipairs(b.enemies) do if e.hp>0 then table.insert(alive,i) end end
+ local count=math.max(1,#alive)
+ local cardWidth=math.min(222,math.floor(726/count)-8)
+ local left=math.floor((782-count*(cardWidth+10)+10)/2)
+ for displayIndex,i in ipairs(alive) do
+  local e=b.enemies[i];local x=left+(displayIndex-1)*(cardWidth+10)
+  local selected=localView.target==i
+  local card=T.button(field,e.name,x,84,cardWidth,148,function() localView.target=i;v.redraw() end,selected and c.gold or c.red,selected)
+  T.label(card,"LV "..e.level.."   •   DEF "..e.defense,13,38,cardWidth-23,25,{size=12,color=c.mute})
+  T.label(card,e.hp.." / "..e.maxHP.." HP",13,68,cardWidth-23,27,{size=14,bold=true,color=c.green})
+  T.progress(card,13,101,cardWidth-26,10,e.hp,e.maxHP,c.green)
+  local effects={}
+  for name,turns in pairs(e.status or {}) do if turns>0 then table.insert(effects,name.." "..turns) end end
+  T.label(card,table.concat(effects,"  "),13,116,cardWidth-22,21,{size=11,color=c.purple})
+ end
+ if #alive==0 then T.label(field,"VICTORY!",240,109,302,80,{size=31,bold=true,color=c.green,align=Enum.TextXAlignment.Center}) end
+ local log=T.panel(root,1001,112,263,514,"COMBAT LOG",c.blue)
+ T.label(log,"Newest actions first",13,50,230,19,{size=12,color=c.mute})
+ local scroll=T.scroll(log,12,77,237,419)
+ for _,msg in ipairs(b.log or {}) do
+  local label=T.copy(scroll,"•  "..msg,math.max(45,math.ceil(#msg/25)*19),c.white)
+  label.TextXAlignment=Enum.TextXAlignment.Left
+ end
+ local actions=T.panel(root,206,394,782,230,"SELECT ACTION",c.gold)
+ local tab=localView.combatTab or "Actions"
+ local function act(action,skill)
+  localView.combatTab="Actions"
+  v.send("CombatAction",{action=action,index=localView.target or 1,skill=skill})
+ end
+ if tab=="Actions" then
+  local opts={
+   {"ATTACK",c.red,function() act("Attack") end},
+   {"ITEMS",c.blue,function() localView.combatTab="Items";v.redraw() end},
+   {"ESCAPE",c.mute,function() act("Escape") end},
+   {"SKILLS",c.purple,function() localView.combatTab="Skills";v.redraw() end},
+  }
+  for i,o in ipairs(opts) do
+   local col=(i-1)%2;local row=math.floor((i-1)/2)
+   T.button(actions,o[1],16+col*382,60+row*77,369,64,o[3],o[2])
+  end
+ else
+  T.button(actions,"← BACK TO ACTIONS",15,10,230,36,function() localView.combatTab="Actions";v.redraw() end,c.mute)
+  local itemScroll=T.scroll(actions,15,56,752,159)
+  if tab=="Skills" then
+   T.entry(itemScroll,"Guard","Universal skill • halves incoming attacks and grants 3 Barrier",function() act("Skill","Guard") end,c.green,65)
+   for _,name in ipairs(v.content.BaseSkills[r.class]) do
+    local cd=b.cooldowns[name] or 0
+    local desc=cd>0 and ("ON COOLDOWN  •  "..cd.." turns") or "Select to use this skill on your target"
+    if name=="Crafted Spell" then desc=r.spell.name.."   •   "..desc end
+    T.entry(itemScroll,name,desc,function() if cd==0 then act("Skill",name) end end,cd>0 and c.border or c.purple,65)
+   end
+  else
+   local n=0
+   for _,name in ipairs(T.keys(r.inventory)) do
+    local item=v.content.Items[name]
+    if item and item.kind=="Consumable" and r.inventory[name]>0 then
+     n+=1;T.entry(itemScroll,name.."   ×"..r.inventory[name],"Use this item during your turn",function() act("Item",name) end,c.blue,60)
+    end
+   end
+   if n==0 then T.copy(itemScroll,"No consumable items available.",50,c.mute) end
+  end
+ end
+ local stats=s.stats or {}
+ local user=T.rect(root,206,637,782,39,c.raised,.02,9);T.stroke(user)
+ T.label(user,""..r.race.." "..r.class.."   |   LEVEL "..r.level,13,3,250,32,{size=13,bold=true})
+ T.label(user,"HP "..r.hp.."/"..(stats.MaxHP or "?").."     MP "..r.mp.."/"..(stats.MaxMP or "?").."     BARRIER "..b.barrier,290,4,470,31,{size=14,bold=true,color=c.green})
+end
+return M
+]]></ProtectedString>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="RBX00000020">
+          <Properties>
+            <string name="Name">Kit</string>
+            <ProtectedString name="Source"><![CDATA[--!strict
+-- Reusable, client-only dark-fantasy GUI primitives. Base canvas: 1280 x 720.
+local T = {}
+T.c = {
+ bg=Color3.fromRGB(13,16,24), panel=Color3.fromRGB(28,32,45),
+ raised=Color3.fromRGB(40,46,61), soft=Color3.fromRGB(51,58,75),
+ border=Color3.fromRGB(71,79,100), white=Color3.fromRGB(239,238,242),
+ mute=Color3.fromRGB(170,177,193), gold=Color3.fromRGB(230,188,105),
+ green=Color3.fromRGB(99,205,151), red=Color3.fromRGB(222,105,119),
+ blue=Color3.fromRGB(112,169,238), purple=Color3.fromRGB(175,135,233),
+}
+function T.make(class, parent, props)
+ local o=Instance.new(class)
+ for k,v in pairs(props or {}) do o[k]=v end
+ o.Parent=parent
+ return o
+end
+function T.rect(parent,x,y,w,h,color,alpha,radius)
+ local f=T.make("Frame",parent,{Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),BackgroundColor3=color or T.c.panel,BackgroundTransparency=alpha or 0,BorderSizePixel=0})
+ if radius ~= false then T.make("UICorner",f,{CornerRadius=UDim.new(0,radius or 10)}) end
+ return f
+end
+function T.stroke(parent,color,thickness)
+ return T.make("UIStroke",parent,{ApplyStrokeMode=Enum.ApplyStrokeMode.Border,Color=color or T.c.border,Transparency=.27,Thickness=thickness or 1})
+end
+function T.panel(parent,x,y,w,h,title,accent)
+ local p=T.rect(parent,x,y,w,h,T.c.panel,.03,12)
+ T.stroke(p)
+ if title then
+  T.label(p,title,17,11,w-34,31,{size=18,bold=true,color=accent or T.c.gold})
+  T.rect(p,17,48,w-34,1,T.c.border,.35,false)
+ end
+ return p
+end
+function T.label(parent,text,x,y,w,h,opt)
+ opt=opt or {}
+ return T.make("TextLabel",parent,{
+  Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),
+  BackgroundTransparency=1,Text=tostring(text),Font=opt.bold and Enum.Font.GothamBold or Enum.Font.Gotham,
+  TextSize=opt.size or 15,TextColor3=opt.color or T.c.white,
+  TextWrapped=opt.wrap ~= false,TextXAlignment=opt.align or Enum.TextXAlignment.Left,
+  TextYAlignment=opt.valign or Enum.TextYAlignment.Center,
+  TextTruncate=opt.truncate and Enum.TextTruncate.AtEnd or Enum.TextTruncate.None,
+ })
+end
+function T.button(parent,text,x,y,w,h,callback,accent,selected)
+ local color=selected and Color3.fromRGB(62,66,80) or T.c.raised
+ local b=T.make("TextButton",parent,{Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),
+  BackgroundColor3=color,BorderSizePixel=0,AutoButtonColor=true,Text=tostring(text),
+  Font=Enum.Font.GothamSemibold,TextSize=15,TextColor3=T.c.white,TextWrapped=true})
+ T.make("UICorner",b,{CornerRadius=UDim.new(0,8)})
+ T.stroke(b,selected and (accent or T.c.gold) or T.c.border,selected and 2 or 1)
+ T.rect(b,0,0,4,h,accent or T.c.blue,0,3)
+ if callback then b.Activated:Connect(callback) end
+ return b
+end
+function T.scroll(parent,x,y,w,h)
+ local sf=T.make("ScrollingFrame",parent,{Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),
+  BackgroundTransparency=1,BorderSizePixel=0,CanvasSize=UDim2.fromOffset(0,0),
+  AutomaticCanvasSize=Enum.AutomaticSize.Y,ScrollingDirection=Enum.ScrollingDirection.Y,
+  ScrollBarThickness=5,ScrollBarImageColor3=T.c.gold,ClipsDescendants=true})
+ T.make("UIListLayout",sf,{SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,7)})
+ T.make("UIPadding",sf,{PaddingBottom=UDim.new(0,9),PaddingRight=UDim.new(0,8)})
+ return sf
+end
+function T.entry(scroll,title,detail,callback,accent,height,selected)
+ height=height or (detail and 68 or 46)
+ local b=T.make("TextButton",scroll,{Size=UDim2.new(1,-3,0,height),BackgroundColor3=selected and T.c.soft or T.c.raised,
+  BorderSizePixel=0,Text="",AutoButtonColor=callback~=nil})
+ T.make("UICorner",b,{CornerRadius=UDim.new(0,8)})
+ T.stroke(b,selected and (accent or T.c.gold) or T.c.border,selected and 2 or 1)
+ T.rect(b,0,0,4,height,accent or T.c.blue,0,3)
+ T.label(b,title,14,4,1000,detail and 28 or height-8,{size=15,bold=true,truncate=true})
+ -- The label must fit the list's current width rather than overflow.
+ local titleLabel=b:FindFirstChildOfClass("TextLabel")
+ if titleLabel then titleLabel.Size=UDim2.new(1,-27,0,detail and 29 or height-8) end
+ if detail then T.label(b,detail,14,33,1,25,{size=12,color=T.c.mute,truncate=true}).Size=UDim2.new(1,-27,0,25) end
+ if callback then b.Activated:Connect(callback) end
+ return b
+end
+function T.copy(parent,text,height,color)
+ local label=T.make("TextLabel",parent,{Size=UDim2.new(1,-12,0,height or 34),BackgroundTransparency=1,
+  Text=tostring(text),TextSize=14,Font=Enum.Font.Gotham,TextColor3=color or T.c.mute,
+  TextWrapped=true,TextXAlignment=Enum.TextXAlignment.Left,TextYAlignment=Enum.TextYAlignment.Center})
+ return label
+end
+function T.progress(parent,x,y,w,h,now,max,color)
+ T.rect(parent,x,y,w,h,T.c.soft,0,4)
+ local fraction=math.clamp((now or 0)/math.max(1,max or 1),0,1)
+ if fraction>0 then T.rect(parent,x,y,math.max(2,w*fraction),h,color or T.c.green,0,4) end
+end
+function T.keys(dict)
+ local out={}
+ for k in pairs(dict or {}) do table.insert(out,k) end
+ table.sort(out)
+ return out
+end
+function T.subtitle(parent,text,x,y,w)
+ T.label(parent,text,x,y,w or 950,26,{size=17,bold=true,color=T.c.gold})
+end
+function T.sheet(parent,run,stats,x,y,w,h)
+ local p=T.panel(parent,x,y,w,h,"CHARACTER INFO",T.c.gold)
+ if not run then return p end
+ T.label(p,run.race.."  /  "..run.class,16,53,w-32,28,{size=15,bold=true})
+ T.label(p,"LV "..run.level.."    XP "..run.xp.."/"..(run.level*35),16,84,w-32,22,{size=13,color=T.c.mute})
+ T.label(p,"HP  "..run.hp.." / "..stats.MaxHP,16,111,w-32,22,{size=13,color=T.c.green})
+ T.progress(p,16,137,w-32,9,run.hp,stats.MaxHP,T.c.green)
+ T.label(p,"MP  "..run.mp.." / "..stats.MaxMP,16,153,w-32,21,{size=13,color=T.c.blue})
+ T.progress(p,16,178,w-32,8,run.mp,stats.MaxMP,T.c.blue)
+ T.label(p,"GOLD  "..run.gold,16,195,w-32,26,{size=14,bold=true,color=T.c.gold})
+ T.rect(p,16,228,w-32,1,T.c.border,.25,false)
+ T.label(p,"MAIN STATS",16,234,w-32,29,{size=14,bold=true,color=T.c.gold})
+ for i,key in ipairs({"Strength","Defense","Speed","Intelligence","Luck","Charisma","Holiness"}) do
+  T.label(p,key,17,263+(i-1)*26,w-80,25,{size=13,color=T.c.mute})
+  T.label(p,tostring(stats[key] or 0),w-67,263+(i-1)*26,47,25,{size=14,bold=true,align=Enum.TextXAlignment.Right})
+ end
+ T.rect(p,16,457,w-32,1,T.c.border,.25,false)
+ T.label(p,"MORE INFO",16,462,w-32,29,{size=14,bold=true,color=T.c.gold})
+ T.label(p,"Kills: "..run.kills.."   Wins: "..run.wins.."   Bosses: "..run.bosses,16,492,w-30,24,{size=12,color=T.c.mute})
+ return p
+end
+return T
+]]></ProtectedString>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="RBX00000021">
+          <Properties>
+            <string name="Name">Menus</string>
+            <ProtectedString name="Source"><![CDATA[--!strict
+-- Front-end screens: central menu, three-column creation, events, rewards, death.
+local T=require(script.Parent.Kit)
+local M={}
+local c=T.c
+local function runStats(choices,content)
+ local s={}
+ for _,key in ipairs(content.Stats) do
+  s[key]=3+(content.Races[choices.race].stats[key] or 0)+(content.Traits[choices.trait].stats[key] or 0)
+ end
+ return s
+end
+function M.Menu(v)
+ local p=v.root
+ T.label(p,"YOUR ADVENTURE BEGINS",0,119,1280,46,{size=31,bold=true,align=Enum.TextXAlignment.Center,color=c.gold})
+ T.label(p,"CREATE A HERO  •  CHOOSE YOUR PATH  •  SURVIVE",0,172,1280,31,{size=15,align=Enum.TextXAlignment.Center,color=c.mute})
+ local center=T.panel(p,470,230,340,365,nil)
+ local items={{"INFO","Info","Info",c.blue},{"PLAY","Play",nil,c.gold},
+  {"MULTIPLAYER","Info","Multiplayer",c.purple},{"ACHIEVEMENTS","Info","Achievements",c.blue},
+  {"LEADERBOARD","Info","Leaderboard",c.blue},{"SETTINGS","Info","Settings",c.mute}}
+ for i,item in ipairs(items) do
+  T.button(center,item[1],32,17+(i-1)*56,276,46,function()
+   if item[2]=="Play" then v.send("Play") else v.send("Info",{kind=item[3]}) end
+  end,item[4])
+ end
+ T.label(p,"A turn-based fantasy roguelike inspired by branching adventure RPGs.",255,614,770,31,{size=13,align=Enum.TextXAlignment.Center,color=c.mute})
+end
+function M.Creation(v)
+ local p=v.root;local choice=v.choice;local content=v.content
+ T.subtitle(p,"CHARACTER CREATION",40,85,950)
+ T.label(p,"Choose one class, one race and one trait. Inspect your final build before continuing.",40,119,1110,28,{size=14,color=c.mute})
+ local defs={{"CLASS","class",content.Classes,c.purple},{"RACE","race",content.Races,c.blue},{"TRAIT","trait",content.Traits,c.green}}
+ for col,d in ipairs(defs) do
+  local x=36+(col-1)*282
+  local panel=T.panel(p,x,165,268,426,d[1],d[4])
+  local list=T.scroll(panel,12,60,244,350)
+  for _,name in ipairs(T.keys(d[3])) do
+   local selected=choice[d[2]]==name
+   local info=d[2]=="class" and d[3][name] or d[3][name].description
+   T.entry(list,name,info,function() choice[d[2]]=name;v.redraw() end,selected and c.gold or d[4],67,selected)
+  end
+ end
+ local view=T.panel(p,882,165,361,426,"CHARACTER PREVIEW",c.gold)
+ T.label(view,choice.race.."  "..choice.class,18,61,325,36,{size=21,bold=true,color=c.gold})
+ T.label(view,"Trait: "..choice.trait,18,103,325,23,{size=14,color=c.green})
+ T.label(view,content.Classes[choice.class],18,134,323,92,{size=14,color=c.mute})
+ T.rect(view,17,233,325,1,c.border,.2,false)
+ T.label(view,"STARTING ATTRIBUTES",18,242,324,26,{size=14,color=c.gold,bold=true})
+ local st=runStats(choice,content)
+ for i,key in ipairs(content.Stats) do
+  local row=math.floor((i-1)/2);local col=(i-1)%2
+  T.label(view,key.."  "..st[key],18+col*166,280+row*29,163,28,{size=13})
+ end
+ T.button(p,"← BACK",510,611,115,44,function() v.send("BackCreation") end,c.mute)
+ T.button(p,"BEGIN ADVENTURE →",640,611,245,44,function() v.send("Confirm",choice) end,c.green)
+end
+function M.Event(v)
+ local s=v.state
+ T.subtitle(v.root,"A NEW ENCOUNTER",42,87,600)
+ local panel=T.panel(v.root,42,129,1196,482,s.eventName or "Mysterious encounter",c.purple)
+ T.label(panel,"An unexpected choice lies along your journey. Your decision may change your rewards or lead directly into combat.",30,66,1090,75,{size=18,color=c.mute})
+ local opts=s.eventChoices or {}
+ for i,opt in ipairs(opts) do
+  T.button(panel,opt.label,40,175+(i-1)*80,420,62,function() v.send("EventChoice",{choice=opt.id}) end,i==#opts and c.mute or c.purple)
+ end
+ T.panel(panel,516,160,628,256,"THE ROAD AHEAD",c.gold)
+ T.label(panel,"There is always a way to walk away from a random encounter. Fighting, bargaining and exploring can have very different results.",544,226,568,112,{size=17,color=c.mute})
+end
+function M.Reward(v)
+ local s=v.state;local r=s.reward;local p=v.root
+ T.subtitle(p,"ENCOUNTER COMPLETE",48,84,900)
+ local rewards=T.panel(p,48,360,1185,266,"REWARDS",c.green)
+ T.label(rewards,r.summary or "You survived.",23,57,1070,36,{size=19,bold=true})
+ T.label(rewards,"+"..(r.xp or 0).." EXP",24,112,240,33,{size=23,bold=true,color=c.blue})
+ T.label(rewards,"+"..(r.gold or 0).." GOLD",275,112,258,33,{size=23,bold=true,color=c.gold})
+ T.label(rewards,(r.item and r.item~="") and ("ITEM FOUND  •  "..r.item) or "NO ITEM FOUND",541,112,600,33,{size=16,color=c.mute})
+ T.button(rewards,r.selected and "CONTINUE TO CAMP →" or "CHOOSE AN UPGRADE ABOVE",440,202,307,44,function()
+  if r.selected then v.send("Continue") end
+ end,r.selected and c.green or c.mute)
+ if r.levelUps>0 then
+  local upgradePanel=T.panel(p,48,125,1185,219,"LEVEL UP!  •  CHOOSE ONE UPGRADE",c.gold)
+  for i,u in ipairs(r.choices or {}) do
+   local x=23+(i-1)*386
+   local card=T.button(upgradePanel,u.name,x,67,367,53,function()
+    if not r.selected then v.send("Upgrade",{name=u.name}) end
+   end,r.selected and c.mute or c.gold)
+   T.label(upgradePanel,u.desc,x+11,128,345,57,{size=15,color=c.mute})
+  end
+ else
+  local top=T.panel(p,48,125,1185,219,"JOURNEY PROGRESS",c.gold)
+  T.label(top,"No level-up this time. Return to camp to manage inventory, skills and your class ability.",25,80,1120,70,{size=18,color=c.mute})
+ end
+end
+function M.Finale(v)
+ local p=v.root;local r=v.state.run;local dead=v.state.phase=="Death"
+ local panel=T.panel(p,250,155,780,400,dead and "YOUR JOURNEY HAS ENDED" or "VICTORY!",dead and c.red or c.gold)
+ T.label(panel,dead and "YOU HAVE FALLEN" or "THE FINAL BOSS IS DEFEATED",25,75,730,65,{size=29,bold=true,align=Enum.TextXAlignment.Center,color=dead and c.red or c.gold})
+ T.label(panel,"Level "..r.level.."     •     "..r.kills.." foes defeated     •     "..r.wins.." combats won",60,155,660,55,{size=17,color=c.mute,align=Enum.TextXAlignment.Center})
+ T.button(panel,"START NEW GAME",211,266,358,51,function() v.send("NewRun") end,c.green)
+end
+function M.Info(v)
+ local s=v.state;local topic=s.info or "INFO"
+ local panel=T.panel(v.root,178,117,926,492,topic:upper(),c.blue)
+ local copy={
+  Multiplayer="Multiplayer is not playable in this first prototype. Synchronized parties and four-player combat require a future server update.",
+  Achievements="Achievements can eventually unlock classes, races, traits, and special starting options. This early build does not persist those unlocks.",
+  Leaderboard="Longest-run leaderboards are planned. Global ranking and DataStore persistence have not been implemented in this prototype.",
+  Settings="The in-game settings panel is planned. You can adjust game audio and graphics through Roblox's built-in settings menu.",
+  Info="STRENGTH increases physical damage. DEFENSE increases health and damage reduction. SPEED influences evasion. INTELLIGENCE increases magic damage and MP. LUCK influences critical hits. CHARISMA supports economy and encounters. HOLINESS improves healing and holy effects.",
+ }
+ T.label(panel,copy[topic] or copy.Info,40,91,838,217,{size=19,color=c.mute})
+ T.button(panel,"← BACK",341,385,246,48,function() v.send("BackInfo") end,c.blue)
+end
+return M
+]]></ProtectedString>
+          </Properties>
+        </Item>
       </Item>
     </Item>
   </Item>

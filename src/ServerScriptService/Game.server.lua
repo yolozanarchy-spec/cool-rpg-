@@ -92,7 +92,8 @@ local function handle(ctx,op,p)
  local r=ctx.run
  if op=="Poll" then return end
  if op=="Play" and phase=="Menu" then ctx.phase="Creation";return end
- if op=="Info" and (phase=="Menu" or phase=="Camp") then ctx.info= p and p.kind or "Info";ctx.beforeInfo=phase;ctx.phase="Info";return end
+ if op=="BackCreation" and phase=="Creation" then ctx.phase="Menu";return end
+ if op=="Info" and phase~="Info" then ctx.info= p and p.kind or "Info";ctx.beforeInfo=phase;ctx.phase="Info";return end
  if op=="BackInfo" and phase=="Info" then ctx.phase=ctx.beforeInfo or "Menu";return end
  if op=="Confirm" and phase=="Creation" then
   if typeof(p)~="table" or not contains(Content.Races,p.race) or not contains(Content.Classes,p.class) or not contains(Content.Traits,p.trait) then return note(ctx,"Invalid character") end
@@ -102,7 +103,7 @@ local function handle(ctx,op,p)
   return
  end
  if not r then return end
- if op=="CampTab" and phase=="Camp" then
+ if op=="CampTab" and (table.find({"Camp","Inventory","Crafting","Skills","Class","Stats","Codex"},phase) or (phase=="Merchant" and not ctx.shopEvent)) then
   local t=p and p.tab
   if t=="Map" then ctx.phase="Map"
   elseif table.find({"Inventory","Crafting","Skills","Class","Stats","Codex"},t) then ctx.phase=t
@@ -128,7 +129,8 @@ local function handle(ctx,op,p)
   local ok,outcome=Battle.Action(r,p.action,p.index,p.skill)
   if not ok then return note(ctx,outcome) end
   if outcome=="Victory" then rewardCombat(ctx)
-  elseif outcome=="Defeat" then ctx.phase="Death";r.combat=nil end
+  elseif outcome=="Defeat" then ctx.phase="Death";r.combat=nil
+  elseif outcome=="Escaped" then r.combat=nil;enterReward(ctx,"You escaped the encounter without rewards.",{}) end
   return
  end
  if op=="Upgrade" and phase=="Reward" and not ctx.reward.selected then
